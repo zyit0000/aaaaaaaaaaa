@@ -46,6 +46,7 @@ interface EditorProps {
   opiumwareChangelog: string;
   uiVersion: string;
   uiLatestVersion: string;
+  uiDownloadsVersion: string;
   uiUpdateLogs: string;
   isCheckingUpdates: boolean;
   onCheckForUpdates: () => void;
@@ -90,6 +91,7 @@ export default function Editor({
   opiumwareChangelog,
   uiVersion,
   uiLatestVersion,
+  uiDownloadsVersion,
   uiUpdateLogs,
   isCheckingUpdates,
   onCheckForUpdates,
@@ -405,6 +407,9 @@ export default function Editor({
             <strong>UI Version:</strong> {uiVersion || "unknown"}
           </p>
           <p>
+            <strong>Downloads version.txt:</strong> {uiDownloadsVersion || "missing"}
+          </p>
+          <p>
             <strong>Latest UI Version:</strong> {uiLatestVersion || "unknown"}
           </p>
           <div className="ow-update-notes">
@@ -574,6 +579,7 @@ export default function Editor({
     opiumwareChangelog,
     uiVersion,
     uiLatestVersion,
+    uiDownloadsVersion,
     uiUpdateLogs,
     isCheckingUpdates,
     onCheckForUpdates,

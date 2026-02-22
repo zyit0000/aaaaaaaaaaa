@@ -299,6 +299,7 @@ export default function App() {
   const [opiumwareVersion, setOpiumwareVersion] = useState("unknown");
   const [opiumwareRobloxVersion, setOpiumwareRobloxVersion] = useState("unknown");
   const [opiumwareChangelog, setOpiumwareChangelog] = useState("");
+  const [downloadsVersion, setDownloadsVersion] = useState<string | null>(null);
   const [hasLocalVersionFile, setHasLocalVersionFile] = useState(true);
   const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
   const [updatePromptOpen, setUpdatePromptOpen] = useState(false);
@@ -368,22 +369,37 @@ export default function App() {
       .then((res) => (res.ok ? res.text() : ""))
       .then((text) => {
         if (!text.trim()) {
-          setHasLocalVersionFile(false);
           setMissingVersionPromptOpen(true);
           const savedVersion = localStorage.getItem("opiumware/version/current");
           if (savedVersion) setLocalVersion(savedVersion);
           return;
         }
-        setHasLocalVersionFile(true);
         const parsed = text.trim();
         setLocalVersion(parsed);
         localStorage.setItem("opiumware/version/current", parsed);
       })
       .catch(() => {
-        setHasLocalVersionFile(false);
         setMissingVersionPromptOpen(true);
         const savedVersion = localStorage.getItem("opiumware/version/current");
         if (savedVersion) setLocalVersion(savedVersion);
+      });
+  }, []);
+
+  useEffect(() => {
+    invoke<string | null>("get_downloads_version")
+      .then((value) => {
+        const parsed = (value || "").trim();
+        if (!parsed) {
+          setHasLocalVersionFile(false);
+          setDownloadsVersion(null);
+          return;
+        }
+        setHasLocalVersionFile(true);
+        setDownloadsVersion(parsed);
+      })
+      .catch(() => {
+        setHasLocalVersionFile(false);
+        setDownloadsVersion(null);
       });
   }, []);
 
@@ -467,20 +483,20 @@ export default function App() {
       const reader = response.body?.getReader();
       if (!reader) throw new Error("Browser does not support streamed downloads.");
 
-      const chunks: Uint8Array[] = [];
+      const bytes: number[] = [];
       let received = 0;
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         if (!value) continue;
-        chunks.push(value);
+        bytes.push(...value);
         received += value.length;
         if (total > 0) {
           setUpdateProgress(Math.max(2, Math.min(100, Math.round((received / total) * 100))));
         }
       }
 
-      const blob = new Blob(chunks, { type: "application/x-apple-diskimage" });
+      const blob = new Blob([new Uint8Array(bytes)], { type: "application/x-apple-diskimage" });
       const downloadUrl = URL.createObjectURL(blob);
       const fileName = assetUrl.split("/").pop() || "Opiumware-latest.dmg";
       const link = document.createElement("a");
@@ -491,6 +507,7 @@ export default function App() {
 
       triggerTextDownload("version.txt", `${targetVersion}\n`);
       setHasLocalVersionFile(true);
+      setDownloadsVersion(targetVersion);
       localStorage.setItem("opiumware/version/current", targetVersion);
       setLocalVersion(targetVersion);
       setUpdateProgress(100);
@@ -524,7 +541,8 @@ export default function App() {
         const notes = (await notesRes.text()).trim();
         if (notes) setUpdateNotes(notes);
       }
-      if (remote === localVersion) {
+      const currentKnownVersion = downloadsVersion || localVersion;
+      if (remote === currentKnownVersion) {
         if (manual) pushToast("You are on the latest UI version.", "info");
         return;
       }
@@ -538,7 +556,14 @@ export default function App() {
     } finally {
       setIsCheckingUpdates(false);
     }
-  }, [autoUpdateEnabled, hasLocalVersionFile, localVersion, pushToast, startUpdateDownload]);
+  }, [
+    autoUpdateEnabled,
+    downloadsVersion,
+    hasLocalVersionFile,
+    localVersion,
+    pushToast,
+    startUpdateDownload,
+  ]);
 
   useEffect(() => {
     if (!localVersion) return;
@@ -546,26 +571,15 @@ export default function App() {
   }, [localVersion, checkForUpdates]);
 
   const callPortApi = useCallback(async (port: number, action: "attach" | "execute", script: string) => {
-    const paths =
-      action === "attach"
-        ? ["/attach", "/api/attach", "/v1/attach"]
-        : ["/execute", "/api/execute", "/v1/execute"];
-    for (const path of paths) {
-      try {
-        const response = await fetch(`http://127.0.0.1:${port}${path}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body:
-            action === "attach"
-              ? JSON.stringify({})
-              : JSON.stringify({ script, code: script }),
-        });
-        if (response.ok) return true;
-      } catch {
-        // try next path
-      }
+    try {
+      const result = await invoke<string>("OpiumwareExecution", {
+        code: action === "attach" ? "NULL" : script,
+        port: String(port),
+      });
+      return result.toLowerCase().includes("successfully connected");
+    } catch {
+      return false;
     }
-    return false;
   }, []);
 
   const attachToPort = useCallback(
@@ -1054,6 +1068,7 @@ export default function App() {
           opiumwareChangelog={opiumwareChangelog}
           uiVersion={localVersion}
           uiLatestVersion={remoteVersion ?? localVersion}
+          uiDownloadsVersion={downloadsVersion ?? ""}
           uiUpdateLogs={updateNotes}
           isCheckingUpdates={isCheckingUpdates}
           onCheckForUpdates={() => void checkForUpdates(true)}
@@ -1146,6 +1161,7 @@ export default function App() {
                 onClick={() => {
                   triggerTextDownload("version.txt", `${localVersion}\n`);
                   setHasLocalVersionFile(true);
+                  setDownloadsVersion(localVersion);
                   setMissingVersionNoWarning(false);
                   setMissingVersionPromptOpen(false);
                 }}
