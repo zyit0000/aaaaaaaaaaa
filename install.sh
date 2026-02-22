@@ -72,51 +72,57 @@ pick_url() {
 extract_dmg_from_archive() {
   local input_archive="$1"
   local root_dir="$2"
-  local queue_dir="${root_dir}/queue"
-  local unpack_dir="${root_dir}/unpacked"
-  mkdir -p "${queue_dir}" "${unpack_dir}"
+  local work_dir="${root_dir}/work"
+  mkdir -p "${work_dir}"
+  cp "${input_archive}" "${work_dir}/seed.zip"
 
-  cp "${input_archive}" "${queue_dir}/asset"
-  local found_dmg=""
-  local guard=0
-
+  local depth=0
   while true; do
-    guard=$((guard + 1))
-    if [[ "${guard}" -gt 80 ]]; then
+    depth=$((depth + 1))
+    if [[ "${depth}" -gt 80 ]]; then
       log_err "Archive nesting limit reached while searching for .dmg."
       return 1
     fi
 
-    local next_file
-    next_file="$(find "${queue_dir}" -type f \( -name '*.zip' -o -name '*.dmg' \) | head -n 1 || true)"
-    if [[ -z "${next_file}" ]]; then
-      break
+    # First priority: if any dmg exists at this stage, return it immediately.
+    local found_dmg
+    found_dmg="$(find "${work_dir}" -type f -iname '*.dmg' | head -n 1 || true)"
+    if [[ -n "${found_dmg}" ]]; then
+      printf "%s" "${found_dmg}"
+      return 0
     fi
 
-    if [[ "${next_file}" == *.dmg ]]; then
-      found_dmg="${next_file}"
-      break
+    # Collect all zip archives currently available (bash 3.2 compatible).
+    local zip_files=()
+    while IFS= read -r z; do
+      zip_files+=("${z}")
+    done < <(find "${work_dir}" -type f -iname '*.zip' || true)
+
+    if [[ "${#zip_files[@]}" -eq 0 ]]; then
+      return 1
     fi
 
-    local stem
-    stem="$(basename "${next_file}")"
-    stem="${stem%.*}"
-    local dest="${unpack_dir}/${stem}-${guard}"
-    mkdir -p "${dest}"
-    unzip -q "${next_file}" -d "${dest}" || true
-    rm -f "${next_file}"
+    local next_stage="${root_dir}/stage-${depth}"
+    mkdir -p "${next_stage}"
+    local extracted_any=0
 
-    while IFS= read -r nested; do
-      cp "${nested}" "${queue_dir}/$(basename "${nested}")"
-    done < <(find "${dest}" -type f \( -name '*.zip' -o -name '*.dmg' \))
+    for z in "${zip_files[@]}"; do
+      local out_dir
+      out_dir="$(mktemp -d "${next_stage}/unzipped-XXXXXX")"
+      if unzip -q "${z}" -d "${out_dir}"; then
+        extracted_any=1
+      fi
+      rm -f "${z}"
+    done
+
+    if [[ "${extracted_any}" -eq 0 ]]; then
+      return 1
+    fi
+
+    # Fold the next stage back into work directory and continue.
+    find "${next_stage}" -mindepth 1 -maxdepth 1 -exec mv "{}" "${work_dir}/" \;
+    rm -rf "${next_stage}"
   done
-
-  if [[ -n "${found_dmg}" ]]; then
-    printf "%s" "${found_dmg}"
-    return 0
-  fi
-
-  return 1
 }
 
 log_info "Fetching latest release for ${REPO}..."
