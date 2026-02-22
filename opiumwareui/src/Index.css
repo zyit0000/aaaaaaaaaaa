@@ -849,6 +849,43 @@ body.ow-theme-rose {
   grid-template-columns: auto 1fr;
 }
 
+.ow-editor-monaco {
+  background: var(--textarea-bg);
+  color: var(--textarea-fg);
+}
+
+.ow-editor-monaco .ow-editor-header {
+  height: 36px;
+  background: var(--secondary-bg);
+  border-bottom: 1px solid var(--secondary-border);
+}
+
+.ow-editor-monaco .ow-toolbar-title,
+.ow-editor-monaco .ow-toolbar-save {
+  color: var(--toolbar-fg);
+}
+
+.ow-editor-monaco .ow-toolbar-btn {
+  background: var(--chip-bg);
+  border-color: var(--chip-border);
+  color: var(--toolbar-fg);
+}
+
+.ow-editor-monaco .ow-toolbar-btn:hover {
+  filter: brightness(0.97);
+}
+
+.ow-editor-monaco .ow-port-select {
+  background: var(--chip-bg);
+  border-color: var(--chip-border);
+  color: var(--toolbar-fg);
+}
+
+.ow-editor-monaco .ow-editor-workspace {
+  grid-template-columns: 56px minmax(0, 1fr) 118px;
+  background: var(--textarea-bg);
+}
+
 .ow-line-gutter {
   width: 44px;
   border-right: 1px solid var(--editor-border);
@@ -862,6 +899,14 @@ body.ow-theme-rose {
   overflow: auto;
   scrollbar-width: none;
   -ms-overflow-style: none;
+}
+
+.ow-editor-monaco .ow-line-gutter {
+  width: 56px;
+  background: var(--line-gutter-bg);
+  color: var(--muted);
+  border-right: 1px solid var(--editor-border);
+  font-family: Menlo, Monaco, Consolas, "Courier New", monospace;
 }
 
 .ow-line-gutter span {
@@ -884,6 +929,46 @@ body.ow-theme-rose {
   padding: 14px;
   font-size: 14px;
   scrollbar-color: var(--chip-border) var(--textarea-bg);
+}
+
+.ow-editor-monaco .ow-editor-textarea {
+  background: var(--textarea-bg);
+  color: var(--textarea-fg);
+  caret-color: var(--toolbar-fg);
+  font-family: Menlo, Monaco, Consolas, "Courier New", monospace;
+  border-right: 1px solid var(--editor-border);
+  scrollbar-color: var(--chip-border) var(--textarea-bg);
+}
+
+.ow-editor-monaco .ow-editor-textarea::selection {
+  background: color-mix(in srgb, var(--secondary-active-border) 60%, transparent);
+}
+
+.ow-minimap-pane {
+  min-height: 0;
+  overflow: hidden;
+  background: var(--textarea-bg);
+  border-left: 1px solid var(--editor-border);
+}
+
+.ow-minimap-text {
+  margin: 0;
+  height: 100%;
+  padding: 10px 6px;
+  overflow: auto;
+  font-size: 2px;
+  line-height: 4px;
+  letter-spacing: 0.2px;
+  color: color-mix(in srgb, var(--muted) 75%, transparent);
+  user-select: none;
+  pointer-events: none;
+  white-space: pre;
+  font-family: Menlo, Monaco, Consolas, "Courier New", monospace;
+}
+
+.ow-minimap-text::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
 
 .ow-editor-textarea.smooth {
@@ -1044,6 +1129,13 @@ body.ow-theme-rose {
   color: var(--muted);
 }
 
+.ow-editor-monaco .ow-status-bar {
+  height: 24px;
+  border-top: 0;
+  background: var(--secondary-active-border);
+  color: var(--secondary-active-fg);
+}
+
 .ow-script-preview {
   max-height: 380px;
   overflow: auto;
@@ -1151,6 +1243,50 @@ body.ow-theme-rose {
   background: var(--secondary-active-bg);
   border-color: var(--secondary-active-border);
   color: var(--secondary-active-fg);
+}
+
+.ow-settings-divider {
+  width: 100%;
+  border: 0;
+  border-top: 1px solid var(--chip-border);
+  margin: 4px 0;
+}
+
+.ow-missing-version-overlay {
+  position: fixed;
+  left: 14px;
+  bottom: 14px;
+  z-index: 3800;
+}
+
+.ow-missing-version-card {
+  min-width: 320px;
+  max-width: 420px;
+  border: 1px solid var(--chip-border);
+  border-radius: 12px;
+  background: var(--secondary-bg);
+  color: var(--toolbar-fg);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.3);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ow-missing-version-card h3,
+.ow-missing-version-card p {
+  margin: 0;
+}
+
+.ow-missing-version-warning {
+  color: #ffcf66;
+  font-size: 12px;
+}
+
+.ow-missing-version-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
 }
 
 .ow-update-card p {

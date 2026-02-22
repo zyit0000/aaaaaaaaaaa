@@ -40,6 +40,12 @@ interface LatestReleaseResponse {
   assets?: ReleaseAsset[];
 }
 
+interface OpiumwareVersionJson {
+  CurrentVersion?: string;
+  SupportedRobloxVersion?: string;
+  Changelog?: string;
+}
+
 type Action =
   | { type: "LOAD_NOTES"; notes: Note[] }
   | { type: "CREATE_FILE"; body?: string; title?: string }
@@ -61,6 +67,7 @@ const initialState: AppState = {
 const defaultEditorSettings: EditorSettings = {
   wordWrap: false,
   smoothTyping: true,
+  showMinimap: false,
   showLineNumbers: true,
   relativeLineNumbers: false,
   spellCheck: false,
@@ -84,6 +91,8 @@ const RAW_BASE = `https://raw.githubusercontent.com/${UPDATE_REPO}/${UPDATE_BRAN
 const REMOTE_VERSION_URL = `${RAW_BASE}/version.txt`;
 const REMOTE_NOTES_URL = `${RAW_BASE}/update-notes.txt`;
 const RELEASE_API_URL = `https://api.github.com/repos/${UPDATE_REPO}/releases/latest`;
+const OPIUMWARE_VERSION_JSON_URL =
+  "https://raw.githubusercontent.com/norbyv1/OpiumwareInstall/main/version.json";
 
 function toFileName(title: string, index: number): string {
   const normalized = title
@@ -287,8 +296,15 @@ export default function App() {
   const [localVersion, setLocalVersion] = useState("0.1.0");
   const [remoteVersion, setRemoteVersion] = useState<string | null>(null);
   const [updateNotes, setUpdateNotes] = useState("");
+  const [opiumwareVersion, setOpiumwareVersion] = useState("unknown");
+  const [opiumwareRobloxVersion, setOpiumwareRobloxVersion] = useState("unknown");
+  const [opiumwareChangelog, setOpiumwareChangelog] = useState("");
+  const [hasLocalVersionFile, setHasLocalVersionFile] = useState(true);
+  const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
   const [updatePromptOpen, setUpdatePromptOpen] = useState(false);
   const [updateModeOpen, setUpdateModeOpen] = useState(false);
+  const [missingVersionPromptOpen, setMissingVersionPromptOpen] = useState(false);
+  const [missingVersionNoWarning, setMissingVersionNoWarning] = useState(false);
   const [autoUpdateEnabled, setAutoUpdateEnabled] = useState(false);
   const [updateProgressOpen, setUpdateProgressOpen] = useState(false);
   const [updateProgress, setUpdateProgress] = useState(0);
@@ -348,25 +364,46 @@ export default function App() {
   useEffect(() => {
     const auto = localStorage.getItem("opiumware/update/auto");
     setAutoUpdateEnabled(auto === "1");
-    const savedVersion = localStorage.getItem("opiumware/version/current");
-    if (savedVersion) {
-      setLocalVersion(savedVersion);
-      return;
-    }
     void fetch("/version.txt")
       .then((res) => (res.ok ? res.text() : ""))
       .then((text) => {
+        if (!text.trim()) {
+          setHasLocalVersionFile(false);
+          setMissingVersionPromptOpen(true);
+          const savedVersion = localStorage.getItem("opiumware/version/current");
+          if (savedVersion) setLocalVersion(savedVersion);
+          return;
+        }
+        setHasLocalVersionFile(true);
         const parsed = text.trim();
-        if (!parsed) return;
         setLocalVersion(parsed);
         localStorage.setItem("opiumware/version/current", parsed);
       })
-      .catch(() => {});
+      .catch(() => {
+        setHasLocalVersionFile(false);
+        setMissingVersionPromptOpen(true);
+        const savedVersion = localStorage.getItem("opiumware/version/current");
+        if (savedVersion) setLocalVersion(savedVersion);
+      });
   }, []);
 
   useEffect(() => {
     localStorage.setItem("opiumware/update/auto", autoUpdateEnabled ? "1" : "0");
   }, [autoUpdateEnabled]);
+
+  useEffect(() => {
+    void fetch(OPIUMWARE_VERSION_JSON_URL)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        const json = (data ?? {}) as OpiumwareVersionJson;
+        if (json.CurrentVersion) setOpiumwareVersion(json.CurrentVersion);
+        if (json.SupportedRobloxVersion) {
+          setOpiumwareRobloxVersion(json.SupportedRobloxVersion);
+        }
+        if (json.Changelog) setOpiumwareChangelog(json.Changelog);
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     void fetch("/opiumwareapi.js")
@@ -453,6 +490,7 @@ export default function App() {
       URL.revokeObjectURL(downloadUrl);
 
       triggerTextDownload("version.txt", `${targetVersion}\n`);
+      setHasLocalVersionFile(true);
       localStorage.setItem("opiumware/version/current", targetVersion);
       setLocalVersion(targetVersion);
       setUpdateProgress(100);
@@ -466,8 +504,14 @@ export default function App() {
     }
   }, [pushToast]);
 
-  const checkForUpdates = useCallback(async () => {
+  const checkForUpdates = useCallback(async (manual = false) => {
+    setIsCheckingUpdates(true);
     try {
+      if (manual && !hasLocalVersionFile) {
+        setMissingVersionNoWarning(false);
+        setMissingVersionPromptOpen(true);
+        return;
+      }
       const [versionRes, notesRes] = await Promise.all([
         fetch(REMOTE_VERSION_URL),
         fetch(REMOTE_NOTES_URL).catch(() => null),
@@ -480,7 +524,10 @@ export default function App() {
         const notes = (await notesRes.text()).trim();
         if (notes) setUpdateNotes(notes);
       }
-      if (remote === localVersion) return;
+      if (remote === localVersion) {
+        if (manual) pushToast("You are on the latest UI version.", "info");
+        return;
+      }
       if (autoUpdateEnabled) {
         void startUpdateDownload(remote);
         return;
@@ -488,13 +535,14 @@ export default function App() {
       setUpdatePromptOpen(true);
     } catch {
       // ignore update check errors
+    } finally {
+      setIsCheckingUpdates(false);
     }
-  }, [autoUpdateEnabled, localVersion, startUpdateDownload]);
+  }, [autoUpdateEnabled, hasLocalVersionFile, localVersion, pushToast, startUpdateDownload]);
 
   useEffect(() => {
     if (!localVersion) return;
     void checkForUpdates();
-    triggerTextDownload("version.txt", `${localVersion}\n`);
   }, [localVersion, checkForUpdates]);
 
   const callPortApi = useCallback(async (port: number, action: "attach" | "execute", script: string) => {
@@ -1001,6 +1049,14 @@ export default function App() {
           onSettingsChange={(next) => setEditorSettings((prev) => ({ ...prev, ...next }))}
           onSaveNow={() => void saveActiveNoteToFile()}
           onAutosave={() => persistNotesNow(state.notes)}
+          opiumwareVersion={opiumwareVersion}
+          opiumwareRobloxVersion={opiumwareRobloxVersion}
+          opiumwareChangelog={opiumwareChangelog}
+          uiVersion={localVersion}
+          uiLatestVersion={remoteVersion ?? localVersion}
+          uiUpdateLogs={updateNotes}
+          isCheckingUpdates={isCheckingUpdates}
+          onCheckForUpdates={() => void checkForUpdates(true)}
           onChange={(body) => {
             if (!state.activeNoteId) return;
             dispatch({ type: "UPDATE_NOTE", id: state.activeNoteId, body });
@@ -1072,6 +1128,48 @@ export default function App() {
           }}
         />
       </div>
+
+      {missingVersionPromptOpen && (
+        <div className="ow-missing-version-overlay">
+          <div className="ow-missing-version-card">
+            <h3>version.txt not found</h3>
+            <p>Create and download a local `version.txt` now?</p>
+            {missingVersionNoWarning && (
+              <p className="ow-missing-version-warning">
+                Without `version.txt`, update checks may be inaccurate. Press Later again to continue.
+              </p>
+            )}
+            <div className="ow-missing-version-actions">
+              <button
+                type="button"
+                className="ow-toolbar-btn ow-confirm-yes"
+                onClick={() => {
+                  triggerTextDownload("version.txt", `${localVersion}\n`);
+                  setHasLocalVersionFile(true);
+                  setMissingVersionNoWarning(false);
+                  setMissingVersionPromptOpen(false);
+                }}
+              >
+                Create
+              </button>
+              <button
+                type="button"
+                className="ow-toolbar-btn"
+                onClick={() => {
+                  if (!missingVersionNoWarning) {
+                    setMissingVersionNoWarning(true);
+                    return;
+                  }
+                  setMissingVersionPromptOpen(false);
+                  setMissingVersionNoWarning(false);
+                }}
+              >
+                Later
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {updatePromptOpen && (
         <div className="ow-modal-backdrop">

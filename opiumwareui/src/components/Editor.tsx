@@ -11,6 +11,7 @@ import {
   EyeOff,
   FileCode2,
   FileText,
+  RefreshCw,
   IndentIncrease,
   Moon,
   Paintbrush2,
@@ -40,6 +41,14 @@ interface EditorProps {
   onSettingsChange: (settings: Partial<EditorSettings>) => void;
   onSaveNow: () => void;
   onAutosave: () => void;
+  opiumwareVersion: string;
+  opiumwareRobloxVersion: string;
+  opiumwareChangelog: string;
+  uiVersion: string;
+  uiLatestVersion: string;
+  uiUpdateLogs: string;
+  isCheckingUpdates: boolean;
+  onCheckForUpdates: () => void;
   selectedScript: ScriptEntry | null;
   onCreateFileFromScript: (script: ScriptEntry) => void;
   ports: number[];
@@ -76,6 +85,14 @@ export default function Editor({
   onSettingsChange,
   onSaveNow,
   onAutosave,
+  opiumwareVersion,
+  opiumwareRobloxVersion,
+  opiumwareChangelog,
+  uiVersion,
+  uiLatestVersion,
+  uiUpdateLogs,
+  isCheckingUpdates,
+  onCheckForUpdates,
   selectedScript,
   onCreateFileFromScript,
   ports,
@@ -91,6 +108,7 @@ export default function Editor({
 }: EditorProps) {
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
   const lineGutterRef = useRef<HTMLDivElement>(null);
+  const minimapRef = useRef<HTMLPreElement>(null);
   const syncFrameRef = useRef<number | null>(null);
   const [cursorLine, setCursorLine] = useState(1);
   const [draftBody, setDraftBody] = useState(note?.body ?? "");
@@ -131,6 +149,14 @@ export default function Editor({
     commitBodyChange("");
     onClearCurrent();
   };
+  const minimapText = useMemo(
+    () =>
+      draftBody
+        .split("\n")
+        .map((line) => line.replace(/\t/g, "  ").slice(0, 88))
+        .join("\n"),
+    [draftBody]
+  );
 
   const settingsContent = useMemo(() => {
     if (settingsSection === "editor") {
@@ -162,6 +188,18 @@ export default function Editor({
               type="checkbox"
               checked={settings.smoothTyping}
               onChange={(event) => onSettingsChange({ smoothTyping: event.target.checked })}
+            />
+          </label>
+          <label className="ow-setting-row">
+            <span>
+              <FileCode2 size={14} />
+              Minimap
+            </span>
+            <input
+              className="ow-setting-toggle"
+              type="checkbox"
+              checked={settings.showMinimap}
+              onChange={(event) => onSettingsChange({ showMinimap: event.target.checked })}
             />
           </label>
           <label className="ow-setting-row">
@@ -344,6 +382,49 @@ export default function Editor({
         </div>
       );
     }
+    if (settingsSection === "version") {
+      return (
+        <div className="ow-settings-panel">
+          <h3>
+            <Code2 size={16} />
+            Version
+          </h3>
+          <p>
+            <strong>Opiumware Version:</strong> {opiumwareVersion || "unknown"}
+          </p>
+          <p>
+            <strong>Supported Roblox Version:</strong>{" "}
+            {opiumwareRobloxVersion || "unknown"}
+          </p>
+          <div className="ow-update-notes">
+            <strong>Opiumware Changelog</strong>
+            <pre>{opiumwareChangelog || "No changelog available."}</pre>
+          </div>
+          <hr className="ow-settings-divider" />
+          <p>
+            <strong>UI Version:</strong> {uiVersion || "unknown"}
+          </p>
+          <p>
+            <strong>Latest UI Version:</strong> {uiLatestVersion || "unknown"}
+          </p>
+          <div className="ow-update-notes">
+            <strong>UI Update Logs</strong>
+            <pre>{uiUpdateLogs || "No UI update logs available."}</pre>
+          </div>
+          <div className="ow-toolbar-actions">
+            <button
+              className="ow-toolbar-btn"
+              type="button"
+              onClick={onCheckForUpdates}
+              disabled={isCheckingUpdates}
+            >
+              <RefreshCw size={13} />
+              {isCheckingUpdates ? "Checking..." : "Check for updates"}
+            </button>
+          </div>
+        </div>
+      );
+    }
     if (settingsSection === "opiumware") {
       return (
         <div className="ow-settings-panel">
@@ -488,6 +569,14 @@ export default function Editor({
     settingsSection,
     settings,
     theme,
+    opiumwareVersion,
+    opiumwareRobloxVersion,
+    opiumwareChangelog,
+    uiVersion,
+    uiLatestVersion,
+    uiUpdateLogs,
+    isCheckingUpdates,
+    onCheckForUpdates,
     onSettingsChange,
     onThemeChange,
     ports,
@@ -609,7 +698,7 @@ export default function Editor({
   }
 
   return (
-    <main className="ow-editor">
+    <main className="ow-editor ow-editor-monaco">
       <header className="ow-editor-header">
         <div className="ow-editor-toolbar">
           <span className="ow-toolbar-title">
@@ -736,6 +825,9 @@ export default function Editor({
           onScroll={(event) => {
             if (!lineGutterRef.current) return;
             lineGutterRef.current.scrollTop = event.currentTarget.scrollTop;
+            if (minimapRef.current) {
+              minimapRef.current.scrollTop = event.currentTarget.scrollTop;
+            }
           }}
           onBlur={() => {
             if (settings.autosaveOnBlur) onAutosave();
@@ -752,6 +844,13 @@ export default function Editor({
                 : '"SF Mono", "JetBrains Mono", Menlo, Consolas, monospace',
           }}
         />
+        {settings.showMinimap && (
+          <div className="ow-minimap-pane" aria-hidden="true">
+            <pre ref={minimapRef} className="ow-minimap-text">
+              {minimapText || " "}
+            </pre>
+          </div>
+        )}
       </div>
       {settings.showStatusBar && (
         <div className="ow-status-bar">
