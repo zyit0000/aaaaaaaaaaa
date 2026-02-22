@@ -136,6 +136,29 @@ function hasTag(value: unknown, name: string): boolean {
   });
 }
 
+function getScriptItemsFromResponse(payload: unknown): Array<Record<string, unknown>> {
+  const root = toRecord(payload);
+  if (!root) return [];
+  const result = toRecord(root.result);
+  const directCandidates: unknown[] = [
+    result?.scripts,
+    root.scripts,
+    result?.data,
+    root.data,
+    result?.items,
+    root.items,
+    result?.results,
+    root.results,
+    root.result,
+  ];
+  for (const candidate of directCandidates) {
+    if (Array.isArray(candidate)) {
+      return candidate.filter((entry): entry is Record<string, unknown> => !!toRecord(entry));
+    }
+  }
+  return [];
+}
+
 function pickIntelDmgAssetUrl(assets: ReleaseAsset[]): string | null {
   const intel = assets.find((asset) =>
     /(x64|x86_64|amd64).*\.dmg$/i.test(asset.name)
@@ -570,17 +593,30 @@ export default function App() {
     void checkForUpdates();
   }, [localVersion, checkForUpdates]);
 
-  const callPortApi = useCallback(async (port: number, action: "attach" | "execute", script: string) => {
-    try {
-      const result = await invoke<string>("OpiumwareExecution", {
-        code: action === "attach" ? "NULL" : script,
-        port: String(port),
-      });
-      return result.toLowerCase().includes("successfully connected");
-    } catch {
-      return false;
-    }
-  }, []);
+  const callPortApi = useCallback(
+    async (port: number, action: "attach" | "execute", script: string) => {
+      try {
+        const result = await invoke<string>("OpiumwareExecution", {
+          code: action === "attach" ? "NULL" : script,
+          port: String(port),
+        });
+        const normalized = result.toLowerCase();
+        if (action === "attach") {
+          return (
+            normalized.includes("successfully attached") ||
+            normalized.includes("successfully connected")
+          );
+        }
+        return (
+          normalized.includes("successfully executed") ||
+          normalized.includes("script sent")
+        );
+      } catch {
+        return false;
+      }
+    },
+    []
+  );
 
   const attachToPort = useCallback(
     async (port: number) => {
@@ -615,6 +651,96 @@ export default function App() {
     return [];
   }, [ports, callPortApi, pushToast]);
 
+  useEffect(() => {
+    if (attachedPorts.length === 0) return;
+    const timer = setInterval(() => {
+      void (async () => {
+        const checks = await Promise.all(
+          attachedPorts.map(async (port) => ({
+            port,
+            ok: await callPortApi(port, "attach", ""),
+          }))
+        );
+        const alive = checks.filter((entry) => entry.ok).map((entry) => entry.port);
+        if (alive.length === attachedPorts.length) return;
+        const dropped = attachedPorts.filter((port) => !alive.includes(port));
+        setAttachedPorts(alive);
+        setPortStatus(`Detached ${dropped.join(", ")}`);
+        pushToast(`Port closed: ${dropped.join(", ")}`, "error");
+      })();
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [attachedPorts, callPortApi, pushToast]);
+
+  const executeScriptToTargets = useCallback(
+    async (script: string) => {
+      const trimmedScript = script.trim();
+      if (!trimmedScript) {
+        setPortStatus("Script is empty");
+        pushToast("Script is empty", "error");
+        return;
+      }
+
+      let targets =
+        attachMode === "available"
+          ? [...attachedPorts]
+          : attachedPorts.includes(selectedPort)
+            ? [selectedPort]
+            : [];
+
+      if (targets.length === 0 && editorSettings.autoAttach) {
+        if (attachMode === "available") {
+          targets = await attachToAvailable();
+        } else {
+          const okAttach = await attachToPort(selectedPort);
+          if (okAttach) targets = [selectedPort];
+        }
+      }
+
+      if (targets.length === 0) {
+        setPortStatus("No attached ports");
+        pushToast("No attached ports", "error");
+        return;
+      }
+
+      const results = await Promise.all(
+        targets.map(async (port) => ({
+          port,
+          ok: await callPortApi(port, "execute", trimmedScript),
+        }))
+      );
+      const success = results.filter((item) => item.ok).map((item) => item.port);
+      const failed = results.filter((item) => !item.ok).map((item) => item.port);
+
+      if (failed.length > 0) {
+        setAttachedPorts((prev) => prev.filter((port) => !failed.includes(port)));
+      }
+
+      if (success.length > 0 && failed.length === 0) {
+        setPortStatus(`Executed ${success.length} port(s)`);
+        pushToast(`Executed on ${success.join(", ")}`, "success");
+        return;
+      }
+      if (success.length > 0) {
+        setPortStatus(`Executed ${success.length}, failed ${failed.length}`);
+        pushToast(`Executed: ${success.join(", ")} | Failed: ${failed.join(", ")}`, "info");
+        return;
+      }
+      setPortStatus(`Execute failed on ${failed.join(", ")}`);
+      pushToast(`Execute failed on ${failed.join(", ")}`, "error");
+    },
+    [
+      attachMode,
+      attachedPorts,
+      selectedPort,
+      editorSettings.autoAttach,
+      attachToAvailable,
+      attachToPort,
+      callPortApi,
+      pushToast,
+    ]
+  );
+
   const fetchScriptPage = useCallback(
     async (page: number, replace: boolean) => {
       if (loadingScriptsRef.current) return;
@@ -622,21 +748,33 @@ export default function App() {
       setLoadingScripts(true);
       try {
         const query = scriptQuery.trim();
-        let endpoint = query
-          ? `https://scriptblox.com/api/script/search?q=${encodeURIComponent(
-              query
-            )}&max=40&mode=all&page=${page}`
-          : `https://scriptblox.com/api/script/fetch?page=${page}`;
-        let response = await fetch(endpoint, { method: "GET" });
-        if (!response.ok && !query && page === 1) {
-          endpoint = "https://scriptblox.com/api/script/search?q=&max=40&mode=all";
-          response = await fetch(endpoint, { method: "GET" });
+        const endpoints = query
+          ? [
+              `https://scriptblox.com/api/script/search?q=${encodeURIComponent(
+                query
+              )}&max=40&mode=all&page=${page}`,
+              `https://scriptblox.com/api/script/search?q=${encodeURIComponent(
+                query
+              )}&max=40&mode=all`,
+              `https://scriptblox.com/api/script/search?q=${encodeURIComponent(query)}`,
+            ]
+          : [
+              `https://scriptblox.com/api/script/fetch?page=${page}`,
+              `https://scriptblox.com/api/script/fetch?max=40&page=${page}`,
+              `https://scriptblox.com/api/script/search?q=&max=40&mode=all&page=${page}`,
+            ];
+
+        let rawScripts: Array<Record<string, unknown>> = [];
+        for (const endpoint of endpoints) {
+          const response = await fetch(endpoint, { method: "GET" });
+          if (!response.ok) continue;
+          const data = (await response.json()) as unknown;
+          rawScripts = getScriptItemsFromResponse(data);
+          if (rawScripts.length > 0 || endpoint === endpoints[endpoints.length - 1]) {
+            break;
+          }
         }
-        const data = (await response.json()) as {
-          result?: { scripts?: Array<Record<string, unknown>> };
-        };
-        const mappedAll: ScriptEntry[] =
-          data.result?.scripts?.map((item, index) => {
+        const mappedAll: ScriptEntry[] = rawScripts.map((item, index) => {
             const game = toRecord(item.game);
             const key = toRecord(item.key);
             const verified =
@@ -688,7 +826,7 @@ export default function App() {
               bannerUrl,
               script: String(item.script ?? item.content ?? ""),
             };
-          }) ?? [];
+          });
 
         setScripts((prev) => {
           if (replace) return mappedAll;
@@ -1091,46 +1229,7 @@ export default function App() {
             await attachToPort(selectedPort);
           }}
           onExecuteScript={async (script) => {
-            let targets =
-              attachMode === "available"
-                ? [...attachedPorts]
-                : [attachedPorts.includes(selectedPort) ? selectedPort : selectedPort];
-            if (targets.length === 0 && editorSettings.autoAttach) {
-              if (attachMode === "available") {
-                targets = await attachToAvailable();
-              } else {
-                const okAttach = await attachToPort(selectedPort);
-                if (okAttach) targets = [selectedPort];
-              }
-            }
-            if (targets.length === 0) {
-              setPortStatus("No attached ports");
-              pushToast("No attached ports", "error");
-              return;
-            }
-            const results = await Promise.all(
-              targets.map(async (port) => ({
-                port,
-                ok: await callPortApi(port, "execute", script),
-              }))
-            );
-            const success = results.filter((item) => item.ok).map((item) => item.port);
-            const failed = results.filter((item) => !item.ok).map((item) => item.port);
-            if (success.length > 0 && failed.length === 0) {
-              setPortStatus(`Executed ${success.length} port(s)`);
-              pushToast(`Executed on ${success.join(", ")}`, "success");
-              return;
-            }
-            if (success.length > 0) {
-              setPortStatus(`Executed ${success.length}, failed ${failed.length}`);
-              pushToast(
-                `Executed: ${success.join(", ")} | Failed: ${failed.join(", ")}`,
-                "info"
-              );
-              return;
-            }
-            setPortStatus(`Execute failed on ${failed.join(", ")}`);
-            pushToast(`Execute failed on ${failed.join(", ")}`, "error");
+            await executeScriptToTargets(script);
           }}
           onClearCurrent={() => {
             setPortStatus("Cleared editor");
@@ -1140,6 +1239,17 @@ export default function App() {
           onCreateFileFromScript={(script) => {
             dispatch({ type: "CREATE_FILE", title: `${script.title}.lua`, body: script.script });
             setActiveTab("code");
+          }}
+          onExecuteSelectedScript={(script) => {
+            void (async () => {
+              await executeScriptToTargets(script.script);
+            })();
+          }}
+          onCopySelectedScript={(script) => {
+            void navigator.clipboard
+              .writeText(script.script)
+              .then(() => pushToast("Script copied", "success"))
+              .catch(() => pushToast("Copy failed", "error"));
           }}
         />
       </div>

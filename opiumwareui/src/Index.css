@@ -567,6 +567,7 @@ body.ow-theme-rose {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  overscroll-behavior: contain;
 }
 
 .ow-library-more {
@@ -582,6 +583,9 @@ body.ow-theme-rose {
   gap: 8px;
   width: 100%;
   text-align: left;
+  align-items: start;
+  min-height: 52px;
+  min-width: 0;
 }
 
 .ow-script-text {
@@ -589,14 +593,18 @@ body.ow-theme-rose {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  overflow: hidden;
 }
 
 .ow-script-thumb {
   width: 66px;
   height: 44px;
+  min-width: 66px;
+  min-height: 44px;
   border-radius: 8px;
   object-fit: cover;
   border: 1px solid var(--chip-border);
+  flex-shrink: 0;
 }
 
 .ow-script-thumb-empty {
@@ -627,6 +635,7 @@ body.ow-theme-rose {
   overflow: hidden;
   line-height: 1.2;
   word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .ow-script-meta {
@@ -850,14 +859,14 @@ body.ow-theme-rose {
 }
 
 .ow-editor-monaco {
-  background: var(--textarea-bg);
+  background: var(--editor-bg);
   color: var(--textarea-fg);
 }
 
 .ow-editor-monaco .ow-editor-header {
   height: 36px;
-  background: var(--secondary-bg);
-  border-bottom: 1px solid var(--secondary-border);
+  background: var(--editor-bg);
+  border-bottom: 1px solid var(--editor-border);
 }
 
 .ow-editor-monaco .ow-toolbar-title,
@@ -883,7 +892,7 @@ body.ow-theme-rose {
 
 .ow-editor-monaco .ow-editor-workspace {
   grid-template-columns: 56px minmax(0, 1fr) 118px;
-  background: var(--textarea-bg);
+  background: var(--editor-bg);
 }
 
 .ow-line-gutter {
@@ -903,7 +912,7 @@ body.ow-theme-rose {
 
 .ow-editor-monaco .ow-line-gutter {
   width: 56px;
-  background: var(--line-gutter-bg);
+  background: var(--editor-bg);
   color: var(--muted);
   border-right: 1px solid var(--editor-border);
   font-family: Menlo, Monaco, Consolas, "Courier New", monospace;
@@ -932,7 +941,7 @@ body.ow-theme-rose {
 }
 
 .ow-editor-monaco .ow-editor-textarea {
-  background: var(--textarea-bg);
+  background: var(--editor-bg);
   color: var(--textarea-fg);
   caret-color: var(--toolbar-fg);
   font-family: Menlo, Monaco, Consolas, "Courier New", monospace;
@@ -947,7 +956,7 @@ body.ow-theme-rose {
 .ow-minimap-pane {
   min-height: 0;
   overflow: hidden;
-  background: var(--textarea-bg);
+  background: var(--editor-bg);
   border-left: 1px solid var(--editor-border);
 }
 
@@ -1427,6 +1436,13 @@ body.ow-theme-rose {
   border-radius: 999px;
   border: 2px solid transparent;
   background-clip: padding-box;
+}
+
+.ow-library-list .ow-secondary-row.ow-script-item {
+  display: block;
+  padding: 8px;
+  min-height: 66px;
+  width: 100%;
 }
 
 .ow-library-verified {

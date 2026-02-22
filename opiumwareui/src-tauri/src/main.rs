@@ -173,17 +173,33 @@ async fn OpiumwareExecution(code: String, port: String) -> String {
     }
 
     if code != "NULL" {
-        let message = format!("{}", code);
+        let trimmed = code.trim();
+        if trimmed.is_empty() {
+            drop(stream);
+            return "Error sending script: empty script".to_string();
+        }
+        let message = if trimmed.starts_with("OpiumwareScript ")
+            || trimmed.starts_with("OpiumwareSetting ")
+        {
+            trimmed.to_string()
+        } else {
+            format!("OpiumwareScript {}", trimmed)
+        };
         if let Err(e) = send_bytes(&mut stream, &message) {
             drop(stream);
             return format!("Error sending script: {}", e);
         }
-    }
-
-    drop(stream);
-    match connected_port {
-        Some(port) => format!("Successfully connected to Opiumware on port: {}", port),
-        None => "Failed to connect on all ports".to_string(),
+        drop(stream);
+        match connected_port {
+            Some(port) => format!("Successfully executed on Opiumware port: {}", port),
+            None => "Failed to connect on all ports".to_string(),
+        }
+    } else {
+        drop(stream);
+        match connected_port {
+            Some(port) => format!("Successfully attached to Opiumware port: {}", port),
+            None => "Failed to connect on all ports".to_string(),
+        }
     }
 }
 

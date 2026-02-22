@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Plug,
   Play,
+  Copy,
   BadgeCheck,
   BookMarked,
   Code2,
@@ -52,6 +53,8 @@ interface EditorProps {
   onCheckForUpdates: () => void;
   selectedScript: ScriptEntry | null;
   onCreateFileFromScript: (script: ScriptEntry) => void;
+  onExecuteSelectedScript: (script: ScriptEntry) => void;
+  onCopySelectedScript: (script: ScriptEntry) => void;
   ports: number[];
   selectedPort: number;
   attachedPorts: number[];
@@ -97,6 +100,8 @@ export default function Editor({
   onCheckForUpdates,
   selectedScript,
   onCreateFileFromScript,
+  onExecuteSelectedScript,
+  onCopySelectedScript,
   ports,
   selectedPort,
   attachedPorts,
@@ -145,6 +150,14 @@ export default function Editor({
       onChange(next);
       syncFrameRef.current = null;
     });
+  };
+
+  const getCurrentBody = () => textAreaRef.current?.value ?? draftBody;
+
+  const handleExecute = () => {
+    const current = getCurrentBody();
+    commitBodyChange(current);
+    onExecuteScript(current);
   };
 
   const handleClear = () => {
@@ -677,6 +690,22 @@ export default function Editor({
                   <FileCode2 size={13} />
                   Copy To Code Editor
                 </button>
+                <button
+                  className="ow-toolbar-btn"
+                  onClick={() => onExecuteSelectedScript(selectedScript)}
+                  type="button"
+                >
+                  <Play size={13} />
+                  Execute
+                </button>
+                <button
+                  className="ow-toolbar-btn"
+                  onClick={() => onCopySelectedScript(selectedScript)}
+                  type="button"
+                >
+                  <Copy size={13} />
+                  Copy
+                </button>
               </div>
             </div>
           ) : (
@@ -714,7 +743,7 @@ export default function Editor({
           <div className="ow-toolbar-actions">
             <button
               className="ow-toolbar-btn"
-              onClick={() => onExecuteScript(draftBody)}
+              onClick={handleExecute}
               type="button"
             >
               <Play size={13} />
@@ -803,7 +832,7 @@ export default function Editor({
             }
             if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
               event.preventDefault();
-              onExecuteScript(draftBody);
+              handleExecute();
               return;
             }
             if (event.key === "Tab") {

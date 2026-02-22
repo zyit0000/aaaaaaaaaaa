@@ -271,7 +271,9 @@ export default function NoteList({
                 <button
                   key={script.id}
                   type="button"
-                  className={`ow-secondary-row ${selectedScriptId === script.id ? "active" : ""}`}
+                  className={`ow-secondary-row ow-script-item ${
+                    selectedScriptId === script.id ? "active" : ""
+                  }`}
                   onClick={() => onSelectScript(script.id)}
                 >
                   <span className="ow-script-row">
