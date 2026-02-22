@@ -7,7 +7,7 @@ on:
 
 jobs:
   build-macos:
-    runs-on: macos-latest
+    runs-on: macos-13
     env:
       MACOSX_DEPLOYMENT_TARGET: "10.15"
 
@@ -34,7 +34,7 @@ jobs:
 
       - name: Build Tauri app (DMG)
         working-directory: opiumwareui
-        run: npm run tauri build
+        run: npm run tauri build -- --target x86_64-apple-darwin
 
       - uses: actions/upload-artifact@v4
         with:
