@@ -2,12 +2,14 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  type MouseEvent as ReactMouseEvent,
   useReducer,
   useRef,
   useState,
   type CSSProperties,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { BookMarked, Code2, Download, LoaderCircle, Settings2 } from "lucide-react";
 
 import Editor from "./components/Editor";
@@ -44,6 +46,18 @@ interface OpiumwareVersionJson {
   CurrentVersion?: string;
   SupportedRobloxVersion?: string;
   Changelog?: string;
+}
+
+interface UpdateVersionJson {
+  uiVersion?: string;
+  latestUiVersion?: string;
+  version?: string;
+  changelog?: string;
+  updateLogs?: string;
+  notes?: string;
+  dmgUrl?: string;
+  releaseDmgUrl?: string;
+  downloadUrl?: string;
 }
 
 type Action =
@@ -88,8 +102,7 @@ const fallbackPorts = [8392, 8393, 8394, 8395, 8396, 8397];
 const UPDATE_REPO = (import.meta.env.VITE_UPDATE_REPO as string | undefined) ?? "zyit0000/aaaaaaaaaaa";
 const UPDATE_BRANCH = (import.meta.env.VITE_UPDATE_BRANCH as string | undefined) ?? "main";
 const RAW_BASE = `https://raw.githubusercontent.com/${UPDATE_REPO}/${UPDATE_BRANCH}`;
-const REMOTE_VERSION_URL = `${RAW_BASE}/version.txt`;
-const REMOTE_NOTES_URL = `${RAW_BASE}/update-notes.txt`;
+const REMOTE_UPDATE_JSON_URL = `${RAW_BASE}/updateversion.json`;
 const RELEASE_API_URL = `https://api.github.com/repos/${UPDATE_REPO}/releases/latest`;
 const OPIUMWARE_VERSION_JSON_URL =
   "https://raw.githubusercontent.com/norbyv1/OpiumwareInstall/main/version.json";
@@ -184,12 +197,20 @@ function getScriptItemsFromResponse(payload: unknown): Array<Record<string, unkn
 }
 
 function pickIntelDmgAssetUrl(assets: ReleaseAsset[]): string | null {
-  const intel = assets.find((asset) =>
-    /(x64|x86_64|amd64).*\.dmg$/i.test(asset.name)
-  );
+  const intel = assets.find((asset) => /(x64|x86_64|amd64|intel).*\.dmg$/i.test(asset.name));
   if (intel) return intel.browser_download_url;
   const anyDmg = assets.find((asset) => /\.dmg$/i.test(asset.name));
-  return anyDmg?.browser_download_url ?? null;
+  if (anyDmg) return anyDmg.browser_download_url;
+  const macArchive = assets.find(
+    (asset) =>
+      !/\.sig$/i.test(asset.name) &&
+      /(darwin|mac|osx|x64|x86_64|amd64|intel|universal).*\.(zip|app\.tar\.gz)$/i.test(
+        asset.name
+      )
+  );
+  if (macArchive) return macArchive.browser_download_url;
+  const firstUsable = assets.find((asset) => !/\.sig$/i.test(asset.name));
+  return firstUsable?.browser_download_url ?? null;
 }
 
 function triggerTextDownload(fileName: string, content: string) {
@@ -358,6 +379,7 @@ export default function App() {
   const [updateProgress, setUpdateProgress] = useState(0);
   const [updateStatusText, setUpdateStatusText] = useState("Preparing update...");
   const [updateError, setUpdateError] = useState<string | null>(null);
+  const [remoteDmgUrl, setRemoteDmgUrl] = useState<string | null>(null);
   const [ports, setPorts] = useState<number[]>(fallbackPorts);
   const [selectedPort, setSelectedPort] = useState<number>(fallbackPorts[0]);
   const [attachedPorts, setAttachedPorts] = useState<number[]>([]);
@@ -518,20 +540,23 @@ export default function App() {
     }
   }, []);
 
-  const startUpdateDownload = useCallback(async (targetVersion: string) => {
+  const startUpdateDownload = useCallback(async (targetVersion: string, preferredAssetUrl?: string | null) => {
     setUpdateProgressOpen(true);
     setUpdateProgress(0);
     setUpdateError(null);
     setUpdateStatusText("Fetching latest release...");
 
     try {
-      const releaseRes = await fetch(RELEASE_API_URL);
-      if (!releaseRes.ok) throw new Error("Failed to fetch latest release.");
-      const releaseData = (await releaseRes.json()) as LatestReleaseResponse;
-      const assetUrl = pickIntelDmgAssetUrl(releaseData.assets ?? []);
-      const notesFromRelease = String(releaseData.body ?? "").trim();
-      if (notesFromRelease) setUpdateNotes(notesFromRelease);
-      if (!assetUrl) throw new Error("No DMG asset found in latest release.");
+      let assetUrl = preferredAssetUrl?.trim() || "";
+      if (!assetUrl) {
+        const releaseRes = await fetch(RELEASE_API_URL);
+        if (!releaseRes.ok) throw new Error("Failed to fetch latest release.");
+        const releaseData = (await releaseRes.json()) as LatestReleaseResponse;
+        assetUrl = pickIntelDmgAssetUrl(releaseData.assets ?? []) ?? "";
+        const notesFromRelease = String(releaseData.body ?? "").trim();
+        if (notesFromRelease) setUpdateNotes(notesFromRelease);
+      }
+      if (!assetUrl) throw new Error("No downloadable macOS asset found. Set `dmgUrl` in updateversion.json.");
 
       setUpdateStatusText("Downloading update...");
       const response = await fetch(assetUrl);
@@ -553,9 +578,19 @@ export default function App() {
         }
       }
 
-      const blob = new Blob([new Uint8Array(bytes)], { type: "application/x-apple-diskimage" });
+      const lowerUrl = assetUrl.toLowerCase();
+      const mime = lowerUrl.endsWith(".dmg")
+        ? "application/x-apple-diskimage"
+        : "application/octet-stream";
+      const blob = new Blob([new Uint8Array(bytes)], { type: mime });
       const downloadUrl = URL.createObjectURL(blob);
-      const fileName = assetUrl.split("/").pop() || "Opiumware-latest.dmg";
+      let fileName = "Opiumware-latest.dmg";
+      try {
+        const url = new URL(assetUrl);
+        fileName = url.pathname.split("/").pop() || fileName;
+      } catch {
+        fileName = assetUrl.split("/").pop() || fileName;
+      }
       const link = document.createElement("a");
       link.href = downloadUrl;
       link.download = fileName;
@@ -589,25 +624,29 @@ export default function App() {
         setMissingVersionPromptOpen(true);
         return;
       }
-      const [versionRes, notesRes] = await Promise.all([
-        fetch(REMOTE_VERSION_URL),
-        fetch(REMOTE_NOTES_URL).catch(() => null),
-      ]);
-      if (!versionRes.ok) return;
-      const remote = (await versionRes.text()).trim();
+      const metaRes = await fetch(REMOTE_UPDATE_JSON_URL).catch(() => null);
+      const localMetaRes = !metaRes || !metaRes.ok
+        ? await fetch("/updateversion.json").catch(() => null)
+        : null;
+      const response = metaRes && metaRes.ok ? metaRes : localMetaRes;
+      if (!response || !response.ok) return;
+      const meta = (await response.json()) as UpdateVersionJson;
+      const remote = String(
+        meta.latestUiVersion ?? meta.uiVersion ?? meta.version ?? ""
+      ).trim();
       if (!remote) return;
       setRemoteVersion(remote);
-      if (notesRes && notesRes.ok) {
-        const notes = (await notesRes.text()).trim();
-        if (notes) setUpdateNotes(notes);
-      }
+      const notes = String(meta.updateLogs ?? meta.changelog ?? meta.notes ?? "").trim();
+      if (notes) setUpdateNotes(notes);
+      const dmg = String(meta.dmgUrl ?? meta.releaseDmgUrl ?? meta.downloadUrl ?? "").trim();
+      setRemoteDmgUrl(dmg || null);
       const currentKnownVersion = downloadsVersion || localVersion;
       if (remote === currentKnownVersion) {
         if (manual) pushToast("You are on the latest UI version.", "info");
         return;
       }
       if (autoUpdateEnabled) {
-        void startUpdateDownload(remote);
+        void startUpdateDownload(remote, dmg || null);
         return;
       }
       setUpdatePromptOpen(true);
@@ -811,18 +850,16 @@ export default function App() {
             break;
           }
         }
-        const mappedAll: ScriptEntry[] = rawScripts.map((item, index) => {
+      const mappedAll: ScriptEntry[] = rawScripts.map((item, index) => {
             const game = toRecord(item.game);
             const key = toRecord(item.key);
-            const blob = textBlob(item);
             const tagsBlob = textBlob(item.tags);
             const verified =
               toBool(item.verified) ||
               toBool(item.isVerified) ||
               toBool(item.verifiedScript) ||
               hasTag(item.tags, "verified") ||
-              /\bverified\b/.test(tagsBlob) ||
-              /\bverified\b/.test(blob);
+              /\bverified\b/.test(tagsBlob);
             const paid =
               toBool(item.paid) ||
               toBool(item.isPaid) ||
@@ -831,8 +868,7 @@ export default function App() {
               toBool(item.isPremium) ||
               hasTag(item.tags, "paid") ||
               /\bpaid\b/.test(tagsBlob) ||
-              /\bpremium\b/.test(tagsBlob) ||
-              /\bpaid\b/.test(blob);
+              /\bpremium\b/.test(tagsBlob);
             const keySystem =
               toBool(item.keySystem) ||
               toBool(item.keysystem) ||
@@ -840,9 +876,7 @@ export default function App() {
               toBool(item.hasKeySystem) ||
               toBool(key?.system) ||
               hasTag(item.tags, "key") ||
-              /\bkey[\s_-]?system\b/.test(tagsBlob) ||
-              /\bkey[\s_-]?system\b/.test(blob) ||
-              /\bkey[\s_-]?required\b/.test(blob);
+              /\bkey[\s_-]?system\b/.test(tagsBlob);
             const imageUrl =
               String(
                 item.image ??
@@ -1180,9 +1214,16 @@ export default function App() {
     return { label: "Code Editor", icon: <Code2 size={13} /> };
   }, [activeTab]);
 
+  const handleTopbarMouseDown = useCallback((event: ReactMouseEvent<HTMLElement>) => {
+    const target = event.target as HTMLElement | null;
+    if (!target) return;
+    if (target.closest("button, input, textarea, select, a, [role='button']")) return;
+    void getCurrentWindow().startDragging().catch(() => {});
+  }, []);
+
   return (
     <div className="ow-shell">
-      <header className="ow-topbar" data-tauri-drag-region>
+      <header className="ow-topbar" data-tauri-drag-region onMouseDown={handleTopbarMouseDown}>
         <div className="ow-topbar-left" data-tauri-drag-region />
         <div className="ow-topbar-center">
           {activeTabMeta.icon}
@@ -1450,7 +1491,7 @@ export default function App() {
                 className="ow-toolbar-btn ow-confirm-yes"
                 onClick={() => {
                   setUpdateModeOpen(false);
-                  if (remoteVersion) void startUpdateDownload(remoteVersion);
+                  if (remoteVersion) void startUpdateDownload(remoteVersion, remoteDmgUrl);
                 }}
               >
                 Continue

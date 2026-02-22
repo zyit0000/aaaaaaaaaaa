@@ -553,6 +553,9 @@ body.ow-theme-rose {
   font-size: 11px;
   color: var(--muted);
   padding: 2px 2px 0;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 2;
 }
 
 .ow-library-list {
@@ -622,13 +625,17 @@ body.ow-theme-rose {
 }
 
 .ow-library-input {
-  height: 30px;
+  height: 34px;
+  width: 100%;
   border: 1px solid var(--chip-border);
   border-radius: 6px;
   background: var(--chip-bg);
   color: var(--toolbar-fg);
   padding: 0 10px;
   appearance: none;
+  pointer-events: auto;
+  position: relative;
+  z-index: 2;
 }
 
 .ow-script-title {
