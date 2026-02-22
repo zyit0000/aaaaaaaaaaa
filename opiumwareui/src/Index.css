@@ -446,6 +446,10 @@ body.ow-theme-rose {
   overflow-y: auto;
 }
 
+.ow-secondary-content > .ow-secondary-row {
+  flex-shrink: 0;
+}
+
 .ow-secondary-content.ow-library-layout {
   overflow: hidden;
   gap: 8px;
@@ -502,6 +506,8 @@ body.ow-theme-rose {
   align-items: center;
   gap: 8px;
   padding: 8px;
+  min-height: 40px;
+  flex-shrink: 0;
 }
 
 .ow-secondary-row.file.dragging {
@@ -1443,6 +1449,7 @@ body.ow-theme-rose {
   padding: 8px;
   min-height: 66px;
   width: 100%;
+  flex-shrink: 0;
 }
 
 .ow-library-verified {

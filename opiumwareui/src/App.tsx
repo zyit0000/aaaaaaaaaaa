@@ -113,6 +113,14 @@ function toRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
 }
 
+function textBlob(value: unknown): string {
+  try {
+    return JSON.stringify(value ?? "").toLowerCase();
+  } catch {
+    return String(value ?? "").toLowerCase();
+  }
+}
+
 function toBool(value: unknown): boolean {
   if (typeof value === "boolean") return value;
   if (typeof value === "number") return value > 0;
@@ -134,6 +142,22 @@ function hasTag(value: unknown, name: string): boolean {
       (part) => typeof part === "string" && part.toLowerCase().includes(needle)
     );
   });
+}
+
+function matchesScriptFilters(
+  script: ScriptEntry,
+  filters: {
+    mode: "all" | "free" | "paid";
+    verifiedOnly: boolean;
+    keySystem: "all" | "yes" | "no";
+  }
+): boolean {
+  if (filters.mode === "free" && !script.free) return false;
+  if (filters.mode === "paid" && !script.paid) return false;
+  if (filters.verifiedOnly && !script.verified) return false;
+  if (filters.keySystem === "yes" && !script.keySystem) return false;
+  if (filters.keySystem === "no" && script.keySystem) return false;
+  return true;
 }
 
 function getScriptItemsFromResponse(payload: unknown): Array<Record<string, unknown>> {
@@ -354,6 +378,7 @@ export default function App() {
   const draggingResizerRef = useRef(false);
   const loadingScriptsRef = useRef(false);
   const fileHandleByNoteIdRef = useRef<Map<string, FileSystemFileHandle>>(new Map());
+  const filterPrefetchingRef = useRef(false);
 
   useEffect(() => {
     const staleThemeClasses: string[] = [];
@@ -484,6 +509,15 @@ export default function App() {
     }, 10050);
   }, []);
 
+  const writeDownloadsVersion = useCallback(async (version: string) => {
+    try {
+      await invoke("write_downloads_version", { version });
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+
   const startUpdateDownload = useCallback(async (targetVersion: string) => {
     setUpdateProgressOpen(true);
     setUpdateProgress(0);
@@ -528,7 +562,10 @@ export default function App() {
       link.click();
       URL.revokeObjectURL(downloadUrl);
 
-      triggerTextDownload("version.txt", `${targetVersion}\n`);
+      const written = await writeDownloadsVersion(targetVersion);
+      if (!written) {
+        triggerTextDownload("version.txt", `${targetVersion}\n`);
+      }
       setHasLocalVersionFile(true);
       setDownloadsVersion(targetVersion);
       localStorage.setItem("opiumware/version/current", targetVersion);
@@ -542,7 +579,7 @@ export default function App() {
       setUpdateStatusText("Update failed.");
       pushToast("Update failed", "error");
     }
-  }, [pushToast]);
+  }, [pushToast, writeDownloadsVersion]);
 
   const checkForUpdates = useCallback(async (manual = false) => {
     setIsCheckingUpdates(true);
@@ -777,23 +814,35 @@ export default function App() {
         const mappedAll: ScriptEntry[] = rawScripts.map((item, index) => {
             const game = toRecord(item.game);
             const key = toRecord(item.key);
+            const blob = textBlob(item);
+            const tagsBlob = textBlob(item.tags);
             const verified =
               toBool(item.verified) ||
               toBool(item.isVerified) ||
               toBool(item.verifiedScript) ||
-              hasTag(item.tags, "verified");
+              hasTag(item.tags, "verified") ||
+              /\bverified\b/.test(tagsBlob) ||
+              /\bverified\b/.test(blob);
             const paid =
               toBool(item.paid) ||
               toBool(item.isPaid) ||
               toBool(item.premium) ||
-              hasTag(item.tags, "paid");
+              toBool(item.price) ||
+              toBool(item.isPremium) ||
+              hasTag(item.tags, "paid") ||
+              /\bpaid\b/.test(tagsBlob) ||
+              /\bpremium\b/.test(tagsBlob) ||
+              /\bpaid\b/.test(blob);
             const keySystem =
               toBool(item.keySystem) ||
               toBool(item.keysystem) ||
               toBool(item.keyRequired) ||
               toBool(item.hasKeySystem) ||
               toBool(key?.system) ||
-              hasTag(item.tags, "key");
+              hasTag(item.tags, "key") ||
+              /\bkey[\s_-]?system\b/.test(tagsBlob) ||
+              /\bkey[\s_-]?system\b/.test(blob) ||
+              /\bkey[\s_-]?required\b/.test(blob);
             const imageUrl =
               String(
                 item.image ??
@@ -876,6 +925,54 @@ export default function App() {
     }, 220);
     return () => clearTimeout(timer);
   }, [activeTab, scriptQuery, refreshScripts]);
+
+  useEffect(() => {
+    if (activeTab !== "library") return;
+    const filterEnabled =
+      scriptFilters.mode !== "all" ||
+      scriptFilters.verifiedOnly ||
+      scriptFilters.keySystem !== "all";
+    if (!filterEnabled) return;
+    if (filterPrefetchingRef.current) return;
+    if (loadingScriptsRef.current) return;
+    if (!hasMoreScripts) return;
+
+    const matchedCount = scripts.filter((script) =>
+      matchesScriptFilters(script, scriptFilters)
+    ).length;
+    const needsMore = scripts.length < 250 && matchedCount < 80;
+    if (!needsMore) return;
+
+    filterPrefetchingRef.current = true;
+    const timer = setTimeout(() => {
+      void (async () => {
+        try {
+          let page = scriptPage;
+          let total = scripts.length;
+          let rounds = 0;
+          while (rounds < 12 && total < 250 && hasMoreScripts) {
+            rounds += 1;
+            await fetchScriptPage(page + 1, false);
+            page += 1;
+            total += 40;
+          }
+        } finally {
+          filterPrefetchingRef.current = false;
+        }
+      })();
+    }, 120);
+    return () => {
+      clearTimeout(timer);
+      filterPrefetchingRef.current = false;
+    };
+  }, [
+    activeTab,
+    scripts,
+    scriptFilters,
+    hasMoreScripts,
+    scriptPage,
+    fetchScriptPage,
+  ]);
 
   useEffect(() => {
     if (!editorSettings.autoAttach) return;
@@ -1060,15 +1157,7 @@ export default function App() {
     pushToast(`Downloaded ${activeNote.title}`, "info");
   }, [activeNote, persistNotesNow, pushToast, state.notes]);
   const filteredScripts = useMemo(
-    () =>
-      scripts.filter((script) => {
-        if (scriptFilters.mode === "free" && !script.free) return false;
-        if (scriptFilters.mode === "paid" && !script.paid) return false;
-        if (scriptFilters.verifiedOnly && !script.verified) return false;
-        if (scriptFilters.keySystem === "yes" && !script.keySystem) return false;
-        if (scriptFilters.keySystem === "no" && script.keySystem) return false;
-        return true;
-      }),
+    () => scripts.filter((script) => matchesScriptFilters(script, scriptFilters)),
     [scripts, scriptFilters]
   );
   useEffect(() => {
@@ -1093,7 +1182,7 @@ export default function App() {
 
   return (
     <div className="ow-shell">
-      <header className="ow-topbar">
+      <header className="ow-topbar" data-tauri-drag-region>
         <div className="ow-topbar-left" data-tauri-drag-region />
         <div className="ow-topbar-center">
           {activeTabMeta.icon}
@@ -1269,11 +1358,16 @@ export default function App() {
                 type="button"
                 className="ow-toolbar-btn ow-confirm-yes"
                 onClick={() => {
-                  triggerTextDownload("version.txt", `${localVersion}\n`);
-                  setHasLocalVersionFile(true);
-                  setDownloadsVersion(localVersion);
-                  setMissingVersionNoWarning(false);
-                  setMissingVersionPromptOpen(false);
+                  void (async () => {
+                    const written = await writeDownloadsVersion(localVersion);
+                    if (!written) {
+                      triggerTextDownload("version.txt", `${localVersion}\n`);
+                    }
+                    setHasLocalVersionFile(true);
+                    setDownloadsVersion(localVersion);
+                    setMissingVersionNoWarning(false);
+                    setMissingVersionPromptOpen(false);
+                  })();
                 }}
               >
                 Create

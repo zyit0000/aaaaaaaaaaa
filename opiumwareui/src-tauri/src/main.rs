@@ -122,6 +122,7 @@ fn main() {
             load_notes,
             OpiumwareExecution,
             get_downloads_version,
+            write_downloads_version,
         ])
         .run(tauri::generate_context!())
         .expect("Error while running Tauri application");
@@ -217,4 +218,14 @@ async fn get_downloads_version(app: tauri::AppHandle) -> Result<Option<String>, 
         return Ok(None);
     }
     Ok(Some(parsed))
+}
+
+#[tauri::command]
+async fn write_downloads_version(app: tauri::AppHandle, version: String) -> Result<(), String> {
+    use std::fs;
+    let downloads_dir = app.path().download_dir().map_err(|e| e.to_string())?;
+    fs::create_dir_all(&downloads_dir).map_err(|e| e.to_string())?;
+    let version_path = downloads_dir.join("version.txt");
+    fs::write(version_path, format!("{}\n", version.trim())).map_err(|e| e.to_string())?;
+    Ok(())
 }

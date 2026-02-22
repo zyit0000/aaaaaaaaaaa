@@ -1,5 +1,2 @@
-Opiumware 0.1.0
-- Added custom confirmation modals for close/delete with "Don't ask again".
-- Added shift-click multi-select and bulk close/delete actions.
-- Improved file handling: close hides from sidebar, delete moves to trash state.
-- Added save dialog flow and improved editor/port settings behavior.
+Opiumware 0.2.0
+-Added a bunch of stuff.
