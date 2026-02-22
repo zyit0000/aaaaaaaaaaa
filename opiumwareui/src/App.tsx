@@ -1309,7 +1309,10 @@ export default function App() {
           onCopyFilePath={(id) => {
             const note = visibleNotes.find((n) => n.id === id);
             if (!note) return;
-            void navigator.clipboard.writeText(note.title).catch(() => {});
+            void navigator.clipboard
+              .writeText(note.title)
+              .then(() => pushToast("File path copied", "success"))
+              .catch(() => pushToast("Copy failed", "error"));
           }}
           onImportFiles={(files) => {
             if (!files || files.length === 0) return;
@@ -1390,6 +1393,7 @@ export default function App() {
           onCreateFileFromScript={(script) => {
             dispatch({ type: "CREATE_FILE", title: `${script.title}.lua`, body: script.script });
             setActiveTab("code");
+            pushToast("Script copied to code editor", "success");
           }}
           onExecuteSelectedScript={(script) => {
             void (async () => {

@@ -11,7 +11,7 @@ set -euo pipefail
 
 REPO="${OPIUMWARE_REPO:-zyit0000/aaaaaaaaaaa}"
 API_URL="https://api.github.com/repos/${REPO}/releases/latest"
-DIRECT_URL="${OPIUMWARE_DIRECT_URL:-https://github.com/zyit0000/aaaaaaaaaaa/releases/download/Tests5/macos-dmg.6.zip}"
+DIRECT_URL="${OPIUMWARE_DIRECT_URL:-https://github.com/zyit0000/aaaaaaaaaaa/releases/download/Release/macos-dmg.9.zip}"
 
 CLR_RED="$(printf '\033[31m')"
 CLR_GRN="$(printf '\033[32m')"
