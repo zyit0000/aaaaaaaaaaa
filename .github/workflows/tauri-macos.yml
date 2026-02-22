@@ -7,7 +7,7 @@ on:
 
 jobs:
   build-macos:
-    runs-on: macos-13
+    runs-on: macos-latest
     env:
       MACOSX_DEPLOYMENT_TARGET: "10.15"
 
@@ -19,6 +19,9 @@ jobs:
           node-version: 20
 
       - uses: dtolnay/rust-toolchain@stable
+
+      - name: Add Intel macOS target
+        run: rustup target add x86_64-apple-darwin
 
       - name: Clean + install deps
         working-directory: opiumwareui
