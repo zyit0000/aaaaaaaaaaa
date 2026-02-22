@@ -1350,6 +1350,9 @@ export default function App() {
           collapsed={primaryCollapsed}
           collapseLocked={activeTab === "contribution"}
           onToggleCollapsed={() => setPrimaryCollapsed((v) => !v)}
+          onLockedToggleAttempt={() =>
+            pushToast("Sidebar is locked while on Contribution tab.", "info")
+          }
           onSelectTab={setActiveTab}
           onStartDrag={handleWindowDragMouseDown}
         />

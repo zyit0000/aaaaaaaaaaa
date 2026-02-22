@@ -7,6 +7,7 @@ interface SidebarProps {
   collapsed: boolean;
   collapseLocked: boolean;
   onToggleCollapsed: () => void;
+  onLockedToggleAttempt: () => void;
   onSelectTab: (tab: AppTab) => void;
   onStartDrag: (event: MouseEvent<HTMLElement>) => void;
 }
@@ -16,6 +17,7 @@ export default function Sidebar({
   collapsed,
   collapseLocked,
   onToggleCollapsed,
+  onLockedToggleAttempt,
   onSelectTab,
   onStartDrag,
 }: SidebarProps) {
@@ -23,9 +25,14 @@ export default function Sidebar({
     <aside className="ow-primary" onMouseDown={onStartDrag}>
       <button
         className="ow-primary-toggle"
-        onClick={onToggleCollapsed}
+        onClick={() => {
+          if (collapseLocked) {
+            onLockedToggleAttempt();
+            return;
+          }
+          onToggleCollapsed();
+        }}
         type="button"
-        disabled={collapseLocked}
         title={collapseLocked ? "Sidebar is locked in Contribution" : "Toggle sidebar"}
       >
         {collapsed ? <PanelLeftOpen size={14} /> : <PanelLeftClose size={14} />}
