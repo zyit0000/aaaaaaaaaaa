@@ -8,7 +8,7 @@ import {
   type CSSProperties,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { BookMarked, Code2, Settings2 } from "lucide-react";
+import { BookMarked, Code2, Download, LoaderCircle, Settings2 } from "lucide-react";
 
 import Editor from "./components/Editor";
 import NoteList from "./components/NoteList";
@@ -19,6 +19,7 @@ import { generateId } from "./utils";
 
 interface AppState {
   notes: Note[];
+  trashedNotes: Note[];
   activeNoteId: string | null;
 }
 
@@ -27,6 +28,16 @@ interface AppToast {
   message: string;
   level: "success" | "error" | "info";
   closing: boolean;
+}
+
+interface ReleaseAsset {
+  name: string;
+  browser_download_url: string;
+}
+
+interface LatestReleaseResponse {
+  body?: string;
+  assets?: ReleaseAsset[];
 }
 
 type Action =
@@ -43,6 +54,7 @@ type Action =
 
 const initialState: AppState = {
   notes: [],
+  trashedNotes: [],
   activeNoteId: null,
 };
 
@@ -66,6 +78,12 @@ const defaultEditorSettings: EditorSettings = {
   autosaveMs: 300,
 };
 const fallbackPorts = [8392, 8393, 8394, 8395, 8396, 8397];
+const UPDATE_REPO = (import.meta.env.VITE_UPDATE_REPO as string | undefined) ?? "zyit0000/aaaaaaaaaaa";
+const UPDATE_BRANCH = (import.meta.env.VITE_UPDATE_BRANCH as string | undefined) ?? "main";
+const RAW_BASE = `https://raw.githubusercontent.com/${UPDATE_REPO}/${UPDATE_BRANCH}`;
+const REMOTE_VERSION_URL = `${RAW_BASE}/version.txt`;
+const REMOTE_NOTES_URL = `${RAW_BASE}/update-notes.txt`;
+const RELEASE_API_URL = `https://api.github.com/repos/${UPDATE_REPO}/releases/latest`;
 
 function toFileName(title: string, index: number): string {
   const normalized = title
@@ -109,6 +127,25 @@ function hasTag(value: unknown, name: string): boolean {
   });
 }
 
+function pickIntelDmgAssetUrl(assets: ReleaseAsset[]): string | null {
+  const intel = assets.find((asset) =>
+    /(x64|x86_64|amd64).*\.dmg$/i.test(asset.name)
+  );
+  if (intel) return intel.browser_download_url;
+  const anyDmg = assets.find((asset) => /\.dmg$/i.test(asset.name));
+  return anyDmg?.browser_download_url ?? null;
+}
+
+function triggerTextDownload(fileName: string, content: string) {
+  const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
 function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case "LOAD_NOTES": {
@@ -116,7 +153,7 @@ function reducer(state: AppState, action: Action): AppState {
         ...note,
         title: toFileName(note.title || note.body.split("\n").find(Boolean) || "", index),
       }));
-      return { notes: prepared, activeNoteId: prepared[0]?.id ?? null };
+      return { notes: prepared, trashedNotes: [], activeNoteId: prepared[0]?.id ?? null };
     }
     case "CREATE_FILE": {
       const now = new Date().toISOString();
@@ -127,12 +164,12 @@ function reducer(state: AppState, action: Action): AppState {
         createdAt: now,
         updatedAt: now,
       };
-      return { notes: [note, ...state.notes], activeNoteId: note.id };
+      return { ...state, notes: [note, ...state.notes], activeNoteId: note.id };
     }
     case "IMPORT_FILES": {
       if (action.notes.length === 0) return state;
       const notes = sortByUpdatedAt([...action.notes, ...state.notes]);
-      return { notes, activeNoteId: notes[0]?.id ?? null };
+      return { ...state, notes, activeNoteId: notes[0]?.id ?? null };
     }
     case "SELECT_NOTE":
       return { ...state, activeNoteId: action.id };
@@ -172,7 +209,7 @@ function reducer(state: AppState, action: Action): AppState {
         createdAt: now,
         updatedAt: now,
       };
-      return { notes: [copy, ...state.notes], activeNoteId: copy.id };
+      return { ...state, notes: [copy, ...state.notes], activeNoteId: copy.id };
     }
     case "MOVE_NOTE_TO": {
       const list = [...state.notes];
@@ -184,10 +221,16 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, notes: list };
     }
     case "DELETE_NOTE": {
+      const target = state.notes.find((note) => note.id === action.id) ?? null;
       const notes = state.notes.filter((note) => note.id !== action.id);
       const activeNoteId =
         state.activeNoteId === action.id ? notes[0]?.id ?? null : state.activeNoteId;
-      return { ...state, notes, activeNoteId };
+      return {
+        ...state,
+        notes,
+        trashedNotes: target ? [target, ...state.trashedNotes] : state.trashedNotes,
+        activeNoteId,
+      };
     }
     default:
       return state;
@@ -240,6 +283,17 @@ export default function App() {
   const [hasMoreScripts, setHasMoreScripts] = useState(true);
   const [loadingScripts, setLoadingScripts] = useState(false);
   const [selectedScriptId, setSelectedScriptId] = useState<string | null>(null);
+  const [closedNoteIds, setClosedNoteIds] = useState<string[]>([]);
+  const [localVersion, setLocalVersion] = useState("0.1.0");
+  const [remoteVersion, setRemoteVersion] = useState<string | null>(null);
+  const [updateNotes, setUpdateNotes] = useState("");
+  const [updatePromptOpen, setUpdatePromptOpen] = useState(false);
+  const [updateModeOpen, setUpdateModeOpen] = useState(false);
+  const [autoUpdateEnabled, setAutoUpdateEnabled] = useState(false);
+  const [updateProgressOpen, setUpdateProgressOpen] = useState(false);
+  const [updateProgress, setUpdateProgress] = useState(0);
+  const [updateStatusText, setUpdateStatusText] = useState("Preparing update...");
+  const [updateError, setUpdateError] = useState<string | null>(null);
   const [ports, setPorts] = useState<number[]>(fallbackPorts);
   const [selectedPort, setSelectedPort] = useState<number>(fallbackPorts[0]);
   const [attachedPorts, setAttachedPorts] = useState<number[]>([]);
@@ -256,9 +310,10 @@ export default function App() {
     keySystem: "all",
   });
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [secondaryWidth, setSecondaryWidth] = useState(236);
+  const [secondaryWidth, setSecondaryWidth] = useState(180);
   const draggingResizerRef = useRef(false);
   const loadingScriptsRef = useRef(false);
+  const fileHandleByNoteIdRef = useRef<Map<string, FileSystemFileHandle>>(new Map());
 
   useEffect(() => {
     const staleThemeClasses: string[] = [];
@@ -289,6 +344,29 @@ export default function App() {
       JSON.stringify({ ...editorSettings, theme })
     );
   }, [editorSettings, theme]);
+
+  useEffect(() => {
+    const auto = localStorage.getItem("opiumware/update/auto");
+    setAutoUpdateEnabled(auto === "1");
+    const savedVersion = localStorage.getItem("opiumware/version/current");
+    if (savedVersion) {
+      setLocalVersion(savedVersion);
+      return;
+    }
+    void fetch("/version.txt")
+      .then((res) => (res.ok ? res.text() : ""))
+      .then((text) => {
+        const parsed = text.trim();
+        if (!parsed) return;
+        setLocalVersion(parsed);
+        localStorage.setItem("opiumware/version/current", parsed);
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem("opiumware/update/auto", autoUpdateEnabled ? "1" : "0");
+  }, [autoUpdateEnabled]);
 
   useEffect(() => {
     void fetch("/opiumwareapi.js")
@@ -329,6 +407,95 @@ export default function App() {
       setToasts((prev) => prev.filter((item) => item.id !== id));
     }, 10050);
   }, []);
+
+  const startUpdateDownload = useCallback(async (targetVersion: string) => {
+    setUpdateProgressOpen(true);
+    setUpdateProgress(0);
+    setUpdateError(null);
+    setUpdateStatusText("Fetching latest release...");
+
+    try {
+      const releaseRes = await fetch(RELEASE_API_URL);
+      if (!releaseRes.ok) throw new Error("Failed to fetch latest release.");
+      const releaseData = (await releaseRes.json()) as LatestReleaseResponse;
+      const assetUrl = pickIntelDmgAssetUrl(releaseData.assets ?? []);
+      const notesFromRelease = String(releaseData.body ?? "").trim();
+      if (notesFromRelease) setUpdateNotes(notesFromRelease);
+      if (!assetUrl) throw new Error("No DMG asset found in latest release.");
+
+      setUpdateStatusText("Downloading update...");
+      const response = await fetch(assetUrl);
+      if (!response.ok) throw new Error("Failed to download update asset.");
+      const total = Number(response.headers.get("content-length") || 0);
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error("Browser does not support streamed downloads.");
+
+      const chunks: Uint8Array[] = [];
+      let received = 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value) continue;
+        chunks.push(value);
+        received += value.length;
+        if (total > 0) {
+          setUpdateProgress(Math.max(2, Math.min(100, Math.round((received / total) * 100))));
+        }
+      }
+
+      const blob = new Blob(chunks, { type: "application/x-apple-diskimage" });
+      const downloadUrl = URL.createObjectURL(blob);
+      const fileName = assetUrl.split("/").pop() || "Opiumware-latest.dmg";
+      const link = document.createElement("a");
+      link.href = downloadUrl;
+      link.download = fileName;
+      link.click();
+      URL.revokeObjectURL(downloadUrl);
+
+      triggerTextDownload("version.txt", `${targetVersion}\n`);
+      localStorage.setItem("opiumware/version/current", targetVersion);
+      setLocalVersion(targetVersion);
+      setUpdateProgress(100);
+      setUpdateStatusText("Update downloaded. Open the DMG to install.");
+      pushToast("Update downloaded", "success");
+    } catch (error) {
+      const message = String((error as Error)?.message || "Update failed.");
+      setUpdateError(message);
+      setUpdateStatusText("Update failed.");
+      pushToast("Update failed", "error");
+    }
+  }, [pushToast]);
+
+  const checkForUpdates = useCallback(async () => {
+    try {
+      const [versionRes, notesRes] = await Promise.all([
+        fetch(REMOTE_VERSION_URL),
+        fetch(REMOTE_NOTES_URL).catch(() => null),
+      ]);
+      if (!versionRes.ok) return;
+      const remote = (await versionRes.text()).trim();
+      if (!remote) return;
+      setRemoteVersion(remote);
+      if (notesRes && notesRes.ok) {
+        const notes = (await notesRes.text()).trim();
+        if (notes) setUpdateNotes(notes);
+      }
+      if (remote === localVersion) return;
+      if (autoUpdateEnabled) {
+        void startUpdateDownload(remote);
+        return;
+      }
+      setUpdatePromptOpen(true);
+    } catch {
+      // ignore update check errors
+    }
+  }, [autoUpdateEnabled, localVersion, startUpdateDownload]);
+
+  useEffect(() => {
+    if (!localVersion) return;
+    void checkForUpdates();
+    triggerTextDownload("version.txt", `${localVersion}\n`);
+  }, [localVersion, checkForUpdates]);
 
   const callPortApi = useCallback(async (port: number, action: "attach" | "execute", script: string) => {
     const paths =
@@ -635,10 +802,63 @@ export default function App() {
     if (state.notes.length > 0) persistNotes(state.notes);
   }, [state.notes, persistNotes]);
 
-  const activeNote = useMemo(
-    () => state.notes.find((note) => note.id === state.activeNoteId) ?? null,
-    [state.notes, state.activeNoteId]
+  useEffect(() => {
+    setClosedNoteIds((prev) => prev.filter((id) => state.notes.some((note) => note.id === id)));
+  }, [state.notes]);
+
+  const visibleNotes = useMemo(
+    () => state.notes.filter((note) => !closedNoteIds.includes(note.id)),
+    [state.notes, closedNoteIds]
   );
+  const activeNote = useMemo(
+    () => visibleNotes.find((note) => note.id === state.activeNoteId) ?? null,
+    [visibleNotes, state.activeNoteId]
+  );
+  const saveActiveNoteToFile = useCallback(async () => {
+    if (!activeNote) return;
+    persistNotesNow(state.notes);
+    const extension = activeNote.title.includes(".")
+      ? activeNote.title.slice(activeNote.title.lastIndexOf("."))
+      : ".txt";
+
+    try {
+      let handle = fileHandleByNoteIdRef.current.get(activeNote.id);
+      if (!handle && "showSaveFilePicker" in window) {
+        handle = await (window as unknown as {
+          showSaveFilePicker: (options: unknown) => Promise<FileSystemFileHandle>;
+        }).showSaveFilePicker({
+          suggestedName: activeNote.title || "untitled.ts",
+          types: [
+            {
+              description: "Code Files",
+              accept: { "text/plain": [extension || ".txt", ".txt", ".ts", ".tsx", ".js", ".lua"] },
+            },
+          ],
+        });
+        fileHandleByNoteIdRef.current.set(activeNote.id, handle);
+      }
+
+      if (handle) {
+        const writable = await handle.createWritable();
+        await writable.write(activeNote.body);
+        await writable.close();
+        pushToast(`Saved ${activeNote.title}`, "success");
+        return;
+      }
+    } catch (error) {
+      const message = String((error as Error)?.message || "");
+      if (message.toLowerCase().includes("abort")) return;
+    }
+
+    const blob = new Blob([activeNote.body], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = activeNote.title || "untitled.ts";
+    link.click();
+    URL.revokeObjectURL(url);
+    pushToast(`Downloaded ${activeNote.title}`, "info");
+  }, [activeNote, persistNotesNow, pushToast, state.notes]);
   const filteredScripts = useMemo(
     () =>
       scripts.filter((script) => {
@@ -698,21 +918,25 @@ export default function App() {
 
         <NoteList
           activeTab={activeTab}
-          notes={state.notes}
+          notes={visibleNotes}
           activeNoteId={state.activeNoteId}
           activeSettingsSection={settingsSection}
+          confirmBeforeDelete={editorSettings.confirmBeforeDelete}
+          onSetConfirmBeforeDelete={(value) =>
+            setEditorSettings((prev) => ({ ...prev, confirmBeforeDelete: value }))
+          }
           onSelectSettingsSection={setSettingsSection}
           onSelectNote={(id) => dispatch({ type: "SELECT_NOTE", id })}
-          onCloseNote={(id) => dispatch({ type: "CLOSE_NOTE", id })}
+          onCloseNote={(id) => {
+            setClosedNoteIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
+            dispatch({ type: "CLOSE_NOTE", id });
+          }}
           onDeleteNote={(id) => {
-            if (editorSettings.confirmBeforeDelete) {
-              const ok = window.confirm("Delete this file?");
-              if (!ok) return;
-            }
+            setClosedNoteIds((prev) => prev.filter((noteId) => noteId !== id));
             dispatch({ type: "DELETE_NOTE", id });
           }}
           onRenameNote={(id) => {
-            const note = state.notes.find((n) => n.id === id);
+            const note = visibleNotes.find((n) => n.id === id);
             const nextName = window.prompt("Rename file", note?.title || "untitled.ts");
             if (!nextName) return;
             dispatch({ type: "RENAME_NOTE", id, name: nextName });
@@ -732,13 +956,16 @@ export default function App() {
             }
           }}
           onCopyFilePath={(id) => {
-            const note = state.notes.find((n) => n.id === id);
+            const note = visibleNotes.find((n) => n.id === id);
             if (!note) return;
             void navigator.clipboard.writeText(note.title).catch(() => {});
           }}
           onImportFiles={(files) => {
             if (!files || files.length === 0) return;
             void Promise.all(Array.from(files).map(fileToNote)).then((notes) => {
+              setClosedNoteIds((prev) =>
+                prev.filter((id) => !notes.some((note) => note.id === id))
+              );
               dispatch({ type: "IMPORT_FILES", notes });
             });
           }}
@@ -772,7 +999,8 @@ export default function App() {
           settings={editorSettings}
           onThemeChange={setTheme}
           onSettingsChange={(next) => setEditorSettings((prev) => ({ ...prev, ...next }))}
-          onSaveNow={() => persistNotesNow(state.notes)}
+          onSaveNow={() => void saveActiveNoteToFile()}
+          onAutosave={() => persistNotesNow(state.notes)}
           onChange={(body) => {
             if (!state.activeNoteId) return;
             dispatch({ type: "UPDATE_NOTE", id: state.activeNoteId, body });
@@ -834,8 +1062,6 @@ export default function App() {
             pushToast(`Execute failed on ${failed.join(", ")}`, "error");
           }}
           onClearCurrent={() => {
-            if (!state.activeNoteId) return;
-            dispatch({ type: "UPDATE_NOTE", id: state.activeNoteId, body: "" });
             setPortStatus("Cleared editor");
             pushToast("Editor cleared", "info");
           }}
@@ -846,6 +1072,117 @@ export default function App() {
           }}
         />
       </div>
+
+      {updatePromptOpen && (
+        <div className="ow-modal-backdrop">
+          <div className="ow-modal-card ow-update-card">
+            <h3>
+              <Download size={16} />
+              Update Available
+            </h3>
+            <p>
+              Current: <strong>{localVersion}</strong>
+            </p>
+            <p>
+              Latest: <strong>{remoteVersion ?? "unknown"}</strong>
+            </p>
+            <div className="ow-modal-actions">
+              <button
+                type="button"
+                className="ow-toolbar-btn ow-confirm-yes"
+                onClick={() => {
+                  setUpdatePromptOpen(false);
+                  setUpdateModeOpen(true);
+                }}
+              >
+                Update
+              </button>
+              <button
+                type="button"
+                className="ow-toolbar-btn"
+                onClick={() => setUpdatePromptOpen(false)}
+              >
+                Later
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {updateModeOpen && (
+        <div className="ow-modal-backdrop">
+          <div className="ow-modal-card ow-update-card">
+            <h3>
+              <Settings2 size={16} />
+              Update Mode
+            </h3>
+            <p>Choose how updates should run.</p>
+            <label className="ow-confirm-toggle-row">
+              <span>Enable auto update</span>
+              <input
+                className="ow-setting-toggle"
+                type="checkbox"
+                checked={autoUpdateEnabled}
+                onChange={(event) => setAutoUpdateEnabled(event.target.checked)}
+              />
+            </label>
+            <div className="ow-modal-actions">
+              <button
+                type="button"
+                className="ow-toolbar-btn ow-confirm-yes"
+                onClick={() => {
+                  setUpdateModeOpen(false);
+                  if (remoteVersion) void startUpdateDownload(remoteVersion);
+                }}
+              >
+                Continue
+              </button>
+              <button
+                type="button"
+                className="ow-toolbar-btn"
+                onClick={() => setUpdateModeOpen(false)}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {updateProgressOpen && (
+        <div className="ow-modal-backdrop">
+          <div className="ow-modal-card ow-update-progress-card">
+            <div className="ow-update-progress-left">
+              <h3>
+                <LoaderCircle size={16} />
+                Update Progress
+              </h3>
+              <p>{updateStatusText}</p>
+              <div className="ow-update-notes">
+                <strong>Update changes</strong>
+                <pre>{updateNotes || "No notes available."}</pre>
+              </div>
+              {updateError && <p className="ow-update-error">{updateError}</p>}
+            </div>
+            <div className="ow-update-progress-right">
+              <div
+                className="ow-update-ring"
+                style={{ "--ow-progress": `${updateProgress}` } as CSSProperties}
+              >
+                <span>{updateProgress}%</span>
+              </div>
+              <button
+                type="button"
+                className="ow-toolbar-btn"
+                onClick={() => setUpdateProgressOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="ow-toast-stack">
         {toasts.map((toast) => (
           <div

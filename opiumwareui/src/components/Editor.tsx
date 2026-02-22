@@ -39,6 +39,7 @@ interface EditorProps {
   onThemeChange: (theme: AppTheme) => void;
   onSettingsChange: (settings: Partial<EditorSettings>) => void;
   onSaveNow: () => void;
+  onAutosave: () => void;
   selectedScript: ScriptEntry | null;
   onCreateFileFromScript: (script: ScriptEntry) => void;
   ports: number[];
@@ -74,6 +75,7 @@ export default function Editor({
   onThemeChange,
   onSettingsChange,
   onSaveNow,
+  onAutosave,
   selectedScript,
   onCreateFileFromScript,
   ports,
@@ -123,6 +125,11 @@ export default function Editor({
       onChange(next);
       syncFrameRef.current = null;
     });
+  };
+
+  const handleClear = () => {
+    commitBodyChange("");
+    onClearCurrent();
   };
 
   const settingsContent = useMemo(() => {
@@ -450,7 +457,7 @@ export default function Editor({
         <label className="ow-setting-row">
           <span>
             <ShieldAlert size={14} />
-            Confirm before delete
+            Ask before delete/close
           </span>
           <input
             className="ow-setting-toggle"
@@ -622,7 +629,7 @@ export default function Editor({
               <Plug size={13} />
               Attach
             </button>
-            <button className="ow-toolbar-btn" onClick={onClearCurrent} type="button">
+            <button className="ow-toolbar-btn" onClick={handleClear} type="button">
               <Eraser size={13} />
               Clear
             </button>
@@ -696,7 +703,7 @@ export default function Editor({
             }
             if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "l") {
               event.preventDefault();
-              onClearCurrent();
+              handleClear();
               return;
             }
             if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
@@ -731,7 +738,7 @@ export default function Editor({
             lineGutterRef.current.scrollTop = event.currentTarget.scrollTop;
           }}
           onBlur={() => {
-            if (settings.autosaveOnBlur) onSaveNow();
+            if (settings.autosaveOnBlur) onAutosave();
           }}
           spellCheck={settings.spellCheck}
           style={{

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   BadgeCheck,
   BookMarked,
+  CircleAlert,
   DollarSign,
   FileCode2,
   FilePlus2,
@@ -10,15 +11,17 @@ import {
   KeyRound,
   Keyboard,
   LockOpen,
+  PanelRightClose,
   Palette,
   Plug,
   Plus,
   RefreshCw,
   Settings2,
   SlidersHorizontal,
+  Trash2,
   X,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import type { MouseEvent, ReactNode } from "react";
 import type { AppTab, Note, ScriptEntry, SettingsSection } from "../types";
 import { formatNoteDate } from "../utils";
 
@@ -27,7 +30,9 @@ interface NoteListProps {
   notes: Note[];
   activeNoteId: string | null;
   activeSettingsSection: SettingsSection;
+  confirmBeforeDelete: boolean;
   onSelectNote: (id: string) => void;
+  onSetConfirmBeforeDelete: (value: boolean) => void;
   onCloseNote: (id: string) => void;
   onDeleteNote: (id: string) => void;
   onRenameNote: (id: string) => void;
@@ -73,12 +78,22 @@ interface ContextMenuState {
   y: number;
 }
 
+type ConfirmKind = "delete" | "close";
+
+interface ConfirmDialogState {
+  kind: ConfirmKind;
+  ids: string[];
+  dontAskAgain: boolean;
+}
+
 export default function NoteList({
   activeTab,
   notes,
   activeNoteId,
   activeSettingsSection,
+  confirmBeforeDelete,
   onSelectNote,
+  onSetConfirmBeforeDelete,
   onCloseNote,
   onDeleteNote,
   onRenameNote,
@@ -106,6 +121,9 @@ export default function NoteList({
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [selectionAnchorId, setSelectionAnchorId] = useState<string | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
 
   useEffect(() => {
     const folderInput = folderInputRef.current;
@@ -120,6 +138,65 @@ export default function NoteList({
     window.addEventListener("click", onWindowClick);
     return () => window.removeEventListener("click", onWindowClick);
   }, []);
+
+  useEffect(() => {
+    setSelectedIds((prev) => prev.filter((id) => notes.some((note) => note.id === id)));
+  }, [notes]);
+
+  const executeNoteAction = (kind: ConfirmKind, ids: string[]) => {
+    const uniqueIds = Array.from(new Set(ids));
+    for (const id of uniqueIds) {
+      if (kind === "delete") {
+        onDeleteNote(id);
+      } else {
+        onCloseNote(id);
+      }
+    }
+    setSelectedIds([]);
+    setSelectionAnchorId(null);
+  };
+
+  const requestNoteAction = (kind: ConfirmKind, ids: string[]) => {
+    const targets = Array.from(new Set(ids));
+    if (targets.length === 0) return;
+    if (!confirmBeforeDelete) {
+      executeNoteAction(kind, targets);
+      return;
+    }
+    setConfirmDialog({ kind, ids: targets, dontAskAgain: false });
+  };
+
+  const handleFileClick = (noteId: string, event: MouseEvent<HTMLButtonElement>) => {
+    const clickedIndex = notes.findIndex((note) => note.id === noteId);
+    if (clickedIndex < 0) return;
+
+    if (event.shiftKey && selectionAnchorId) {
+      const anchorIndex = notes.findIndex((note) => note.id === selectionAnchorId);
+      if (anchorIndex >= 0) {
+        const start = Math.min(anchorIndex, clickedIndex);
+        const end = Math.max(anchorIndex, clickedIndex);
+        const range = notes.slice(start, end + 1).map((note) => note.id);
+        setSelectedIds(range);
+      } else {
+        setSelectedIds([noteId]);
+      }
+      onSelectNote(noteId);
+      return;
+    }
+
+    if (event.ctrlKey || event.metaKey) {
+      setSelectedIds((prev) =>
+        prev.includes(noteId) ? prev.filter((id) => id !== noteId) : [...prev, noteId]
+      );
+      setSelectionAnchorId(noteId);
+      onSelectNote(noteId);
+      return;
+    }
+
+    setSelectedIds([noteId]);
+    setSelectionAnchorId(noteId);
+    onSelectNote(noteId);
+  };
 
   if (activeTab === "settings") {
     return (
@@ -326,6 +403,24 @@ export default function NoteList({
           Files
         </h2>
         <div className="ow-secondary-actions">
+          {selectedIds.length > 1 && (
+            <>
+              <button
+                onClick={() => requestNoteAction("close", selectedIds)}
+                type="button"
+                title="Close selected files"
+              >
+                <PanelRightClose size={14} />
+              </button>
+              <button
+                onClick={() => requestNoteAction("delete", selectedIds)}
+                type="button"
+                title="Delete selected files"
+              >
+                <Trash2 size={14} />
+              </button>
+            </>
+          )}
           <button onClick={onCreateFile} type="button" title="New file">
             <Plus size={14} />
           </button>
@@ -360,10 +455,11 @@ export default function NoteList({
         )}
         {notes.map((note) => {
           const active = note.id === activeNoteId;
+          const selected = selectedIds.includes(note.id);
           return (
             <button
               key={note.id}
-              className={`ow-secondary-row file ${active ? "active" : ""} ${
+              className={`ow-secondary-row file ${active || selected ? "active" : ""} ${
                 draggingId === note.id ? "dragging" : ""
               } ${dragOverId === note.id ? "drag-over" : ""}`}
               draggable
@@ -392,7 +488,7 @@ export default function NoteList({
                 event.preventDefault();
                 setContextMenu({ noteId: note.id, x: event.clientX, y: event.clientY });
               }}
-              onClick={() => onSelectNote(note.id)}
+              onClick={(event) => handleFileClick(note.id, event)}
               type="button"
             >
               <span className="ow-file-meta">
@@ -419,16 +515,100 @@ export default function NoteList({
           <button type="button" onClick={onCreateFromClipboard}>
             Paste as New File
           </button>
-          <button type="button" onClick={() => onCloseNote(contextMenu.noteId)}>
+          <button
+            type="button"
+            onClick={() => {
+              const ids =
+                selectedIds.length > 1 && selectedIds.includes(contextMenu.noteId)
+                  ? selectedIds
+                  : [contextMenu.noteId];
+              requestNoteAction("close", ids);
+            }}
+          >
             Close
           </button>
           <button
             type="button"
             className="danger"
-            onClick={() => onDeleteNote(contextMenu.noteId)}
+            onClick={() => {
+              const ids =
+                selectedIds.length > 1 && selectedIds.includes(contextMenu.noteId)
+                  ? selectedIds
+                  : [contextMenu.noteId];
+              requestNoteAction("delete", ids);
+            }}
           >
             Delete
           </button>
+        </div>
+      )}
+
+      {confirmDialog && (
+        <div
+          className="ow-modal-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setConfirmDialog(null);
+          }}
+        >
+          <div className="ow-modal-card ow-confirm-card">
+            <h3>
+              <CircleAlert size={16} />
+              {confirmDialog.kind === "delete" ? "Delete File" : "Close File"}
+            </h3>
+            <p className="ow-confirm-file">
+              File{" "}
+              <strong>
+                {confirmDialog.ids.length === 1
+                  ? notes.find((note) => note.id === confirmDialog.ids[0])?.title ||
+                    "unknown file"
+                  : `${confirmDialog.ids.length} files`}
+              </strong>
+            </p>
+            <p>
+              {confirmDialog.kind === "delete"
+                ? `Are you sure you want to delete ${
+                    confirmDialog.ids.length > 1 ? "these files" : "this file"
+                  }?`
+                : `Are you sure you want to close ${
+                    confirmDialog.ids.length > 1 ? "these files" : "this file"
+                  }?`}
+            </p>
+            <label className="ow-confirm-toggle-row">
+              <span>Don't ask again</span>
+              <input
+                className="ow-setting-toggle"
+                type="checkbox"
+                checked={confirmDialog.dontAskAgain}
+                onChange={(event) =>
+                  setConfirmDialog((prev) =>
+                    prev ? { ...prev, dontAskAgain: event.target.checked } : prev
+                  )
+                }
+              />
+            </label>
+            <div className="ow-modal-actions">
+              <button
+                type="button"
+                className="ow-toolbar-btn ow-confirm-yes"
+                onClick={() => {
+                  if (confirmDialog.dontAskAgain) {
+                    onSetConfirmBeforeDelete(false);
+                  }
+                  executeNoteAction(confirmDialog.kind, confirmDialog.ids);
+                  setConfirmDialog(null);
+                }}
+              >
+                Yes
+              </button>
+              <button
+                type="button"
+                className="ow-toolbar-btn"
+                onClick={() => setConfirmDialog(null)}
+              >
+                No
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </aside>
