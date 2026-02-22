@@ -12,7 +12,8 @@ clear
 
 REPO="${OPIUMWARE_REPO:-zyit0000/aaaaaaaaaaa}"
 API_URL="https://api.github.com/repos/${REPO}/releases/latest"
-DIRECT_URL="${OPIUMWARE_DIRECT_URL:-https://github.com/zyit0000/aaaaaaaaaaa/releases/download/Release1/macos-dmg.11.zip}"
+RAW_VERSION_URL="https://raw.githubusercontent.com/${REPO}/main/version.txt"
+DIRECT_URL="${OPIUMWARE_DIRECT_URL:-}"
 
 CLR_RED="$(printf '\033[31m')"
 CLR_GRN="$(printf '\033[32m')"
@@ -68,8 +69,60 @@ pick_url() {
   return 1
 }
 
+extract_dmg_from_archive() {
+  local input_archive="$1"
+  local root_dir="$2"
+  local queue_dir="${root_dir}/queue"
+  local unpack_dir="${root_dir}/unpacked"
+  mkdir -p "${queue_dir}" "${unpack_dir}"
+
+  cp "${input_archive}" "${queue_dir}/asset"
+  local found_dmg=""
+  local guard=0
+
+  while true; do
+    guard=$((guard + 1))
+    if [[ "${guard}" -gt 80 ]]; then
+      log_err "Archive nesting limit reached while searching for .dmg."
+      return 1
+    fi
+
+    local next_file
+    next_file="$(find "${queue_dir}" -type f \( -name '*.zip' -o -name '*.dmg' \) | head -n 1 || true)"
+    if [[ -z "${next_file}" ]]; then
+      break
+    fi
+
+    if [[ "${next_file}" == *.dmg ]]; then
+      found_dmg="${next_file}"
+      break
+    fi
+
+    local stem
+    stem="$(basename "${next_file}")"
+    stem="${stem%.*}"
+    local dest="${unpack_dir}/${stem}-${guard}"
+    mkdir -p "${dest}"
+    unzip -q "${next_file}" -d "${dest}" || true
+    rm -f "${next_file}"
+
+    while IFS= read -r nested; do
+      cp "${nested}" "${queue_dir}/$(basename "${nested}")"
+    done < <(find "${dest}" -type f \( -name '*.zip' -o -name '*.dmg' \))
+  done
+
+  if [[ -n "${found_dmg}" ]]; then
+    printf "%s" "${found_dmg}"
+    return 0
+  fi
+
+  return 1
+}
+
 log_info "Fetching latest release for ${REPO}..."
 JSON="$(curl -fsSL "${API_URL}" || true)"
+RELEASE_VERSION="$(printf "%s" "${JSON}" | sed -nE 's/.*"tag_name":[[:space:]]*"([^"]+)".*/\1/p' | head -n 1)"
+REMOTE_VERSION_TXT="$(curl -fsSL "${RAW_VERSION_URL}" 2>/dev/null | tr -d '\r' | head -n 1 | xargs || true)"
 
 URLS=()
 while IFS= read -r line; do
@@ -95,7 +148,7 @@ if [[ "${#URLS[@]}" -gt 0 ]]; then
   fi
 fi
 
-if [[ -z "${DOWNLOAD_URL}" ]]; then
+if [[ -z "${DOWNLOAD_URL}" && -n "${DIRECT_URL}" ]]; then
   log_warn "Could not find matching release asset. Falling back to direct URL."
   DOWNLOAD_URL="${DIRECT_URL}"
 fi
@@ -107,6 +160,12 @@ fi
 
 FILE_NAME="$(basename "${DOWNLOAD_URL}")"
 ASSET_PATH="${TMP_DIR}/${FILE_NAME}"
+if [[ -z "${RELEASE_VERSION}" ]]; then
+  RELEASE_VERSION="$(printf "%s" "${FILE_NAME}" | sed -E 's/\.[^.]+$//')"
+fi
+if [[ -n "${REMOTE_VERSION_TXT}" ]]; then
+  RELEASE_VERSION="${REMOTE_VERSION_TXT}"
+fi
 
 log_info "Downloading ${FILE_NAME}..."
 curl -fL "${DOWNLOAD_URL}" -o "${ASSET_PATH}"
@@ -120,11 +179,10 @@ case "${FILE_NAME_LOWER}" in
   *.zip)
     EXTRACT_DIR="${TMP_DIR}/extract"
     mkdir -p "${EXTRACT_DIR}"
-    log_info "Extracting ZIP..."
-    unzip -q "${ASSET_PATH}" -d "${EXTRACT_DIR}"
-    DMG_PATH="$(find "${EXTRACT_DIR}" -type f -name '*.dmg' | head -n 1 || true)"
+    log_info "Extracting archive(s) until .dmg is found..."
+    DMG_PATH="$(extract_dmg_from_archive "${ASSET_PATH}" "${EXTRACT_DIR}" || true)"
     if [[ -z "${DMG_PATH}" ]]; then
-      log_err "ZIP extracted, but no .dmg found inside."
+      log_err "Archive extracted, but no .dmg found inside."
       exit 1
     fi
     ;;
@@ -162,4 +220,9 @@ fi
 cp -R "${APP_SOURCE}" "/Applications/" 2>/dev/null || sudo cp -R "${APP_SOURCE}" "/Applications/"
 
 log_ok "Installed successfully: ${DEST_PATH}"
+DOWNLOADS_DIR="${HOME}/Downloads"
+VERSION_PATH="${DOWNLOADS_DIR}/version.txt"
+mkdir -p "${DOWNLOADS_DIR}"
+printf "%s\n" "${RELEASE_VERSION}" > "${VERSION_PATH}"
+log_ok "Updated version file: ${VERSION_PATH} -> ${RELEASE_VERSION}"
 log_warn "Restart Opiumware to finish applying the update."

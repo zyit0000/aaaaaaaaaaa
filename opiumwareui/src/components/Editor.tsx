@@ -296,6 +296,10 @@ export default function Editor({
 
   useEffect(() => {
     if (!(activeTab === "account" && accountSection === "instances")) return;
+    if (attachedPorts.length === 0) {
+      setInstancePreviewImage(null);
+      return;
+    }
     if (!screenCaptureGranted) {
       setInstancePreviewImage(null);
       return;
@@ -312,12 +316,12 @@ export default function Editor({
         });
     };
     capture();
-    const timer = setInterval(capture, 2400);
+    const timer = setInterval(capture, 5000);
     return () => {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [activeTab, accountSection, screenCaptureGranted]);
+  }, [activeTab, accountSection, screenCaptureGranted, attachedPorts.length]);
 
   const commitBodyChange = (next: string) => {
     setDraftBody(next);

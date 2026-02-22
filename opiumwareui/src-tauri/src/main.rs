@@ -498,21 +498,24 @@ async fn roblox_launch_instance(token: String) -> Result<String, String> {
     Ok("Launched Roblox instance".to_string())
 }
 
-#[cfg(target_os = "macos")]
-#[link(name = "ApplicationServices", kind = "framework")]
-extern "C" {
-    fn CGPreflightScreenCaptureAccess() -> bool;
-    fn CGRequestScreenCaptureAccess() -> bool;
-}
-
 #[tauri::command]
 async fn request_screen_capture_access() -> Result<bool, String> {
     #[cfg(target_os = "macos")]
-    unsafe {
-        if CGPreflightScreenCaptureAccess() {
-            return Ok(true);
+    {
+        // Use screencapture itself to trigger/check the macOS permission prompt.
+        // This avoids CoreGraphics symbol issues on older Catalina installations.
+        let probe_path = std::env::temp_dir().join("opiumware_screen_probe.jpg");
+        let status = Command::new("screencapture")
+            .arg("-x")
+            .arg("-t")
+            .arg("jpg")
+            .arg(&probe_path)
+            .status()
+            .map_err(|e| e.to_string())?;
+        let granted = status.success() && probe_path.exists();
+        if granted {
+            let _ = fs::remove_file(&probe_path);
         }
-        let granted = CGRequestScreenCaptureAccess();
         return Ok(granted);
     }
 
@@ -525,11 +528,7 @@ async fn request_screen_capture_access() -> Result<bool, String> {
 #[tauri::command]
 async fn capture_screen_preview() -> Result<Option<String>, String> {
     #[cfg(target_os = "macos")]
-    unsafe {
-        if !CGPreflightScreenCaptureAccess() {
-            return Ok(None);
-        }
-
+    {
         let temp_path = std::env::temp_dir().join("opiumware_screen_preview.jpg");
         let status = Command::new("screencapture")
             .arg("-x")
@@ -540,8 +539,15 @@ async fn capture_screen_preview() -> Result<Option<String>, String> {
             .map_err(|e| e.to_string())?;
 
         if !status.success() {
-            return Err("Failed to capture macOS screen preview".to_string());
+            return Ok(None);
         }
+
+        // Keep payload small to avoid memory spikes on older Intel Macs.
+        let _ = Command::new("sips")
+            .arg("-Z")
+            .arg("640")
+            .arg(&temp_path)
+            .status();
 
         let bytes = fs::read(&temp_path).map_err(|e| e.to_string())?;
         let encoded = BASE64_STANDARD.encode(bytes);
