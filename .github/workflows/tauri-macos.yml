@@ -10,29 +10,31 @@ jobs:
     runs-on: macos-latest
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
-          cache-dependency-path: opiumwareui/package-lock.json
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
 
-      - name: Install frontend dependencies
+      - name: Clean + install deps
         working-directory: opiumwareui
-        run: npm ci
+        run: |
+          rm -rf node_modules
+          npm ci --include=dev
+          npm ls lucide-react
+          node -e "console.log(require.resolve('lucide-react/package.json'))"
+
+      - name: Verify TypeScript sees lucide-react
+        working-directory: opiumwareui
+        run: npx tsc --noEmit
 
       - name: Build Tauri app (DMG)
         working-directory: opiumwareui
         run: npm run tauri build
 
-      - name: Upload DMG artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: macos-dmg
           path: opiumwareui/src-tauri/target/release/bundle/dmg/*.dmg
