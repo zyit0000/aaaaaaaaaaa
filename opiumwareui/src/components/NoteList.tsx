@@ -11,6 +11,7 @@ import {
   Keyboard,
   LockOpen,
   Palette,
+  Plug,
   Plus,
   RefreshCw,
   Settings2,
@@ -63,6 +64,7 @@ const settingsSections: Array<{ id: SettingsSection; label: string; icon: ReactN
   { id: "theme", label: "Theme", icon: <Palette size={14} /> },
   { id: "files", label: "Files", icon: <FileCode2 size={14} /> },
   { id: "keybinds", label: "Keybinds", icon: <Keyboard size={14} /> },
+  { id: "opiumware", label: "Opiumware", icon: <Plug size={14} /> },
 ];
 
 interface ContextMenuState {

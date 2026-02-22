@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Plug,
+  Play,
   BadgeCheck,
   BookMarked,
   Code2,
-  Download,
   DollarSign,
   Eraser,
   Eye,
@@ -38,9 +39,18 @@ interface EditorProps {
   onThemeChange: (theme: AppTheme) => void;
   onSettingsChange: (settings: Partial<EditorSettings>) => void;
   onSaveNow: () => void;
-  onDownloadCurrentFile: () => void;
   selectedScript: ScriptEntry | null;
   onCreateFileFromScript: (script: ScriptEntry) => void;
+  ports: number[];
+  selectedPort: number;
+  attachedPorts: number[];
+  portStatus: string;
+  attachMode: "selected" | "available";
+  onSelectPort: (port: number) => void;
+  onAttachModeChange: (mode: "selected" | "available") => void;
+  onAttachPort: () => void;
+  onExecuteScript: (script: string) => void;
+  onClearCurrent: () => void;
 }
 
 const themes: Array<{ id: AppTheme; label: string; icon: ReactNode }> = [
@@ -64,16 +74,56 @@ export default function Editor({
   onThemeChange,
   onSettingsChange,
   onSaveNow,
-  onDownloadCurrentFile,
   selectedScript,
   onCreateFileFromScript,
+  ports,
+  selectedPort,
+  attachedPorts,
+  portStatus,
+  attachMode,
+  onSelectPort,
+  onAttachModeChange,
+  onAttachPort,
+  onExecuteScript,
+  onClearCurrent,
 }: EditorProps) {
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
+  const lineGutterRef = useRef<HTMLDivElement>(null);
+  const syncFrameRef = useRef<number | null>(null);
   const [cursorLine, setCursorLine] = useState(1);
+  const [draftBody, setDraftBody] = useState(note?.body ?? "");
 
   useEffect(() => {
     textAreaRef.current?.focus();
   }, [note?.id, activeTab]);
+
+  useEffect(() => {
+    setDraftBody(note?.body ?? "");
+  }, [note?.id]);
+
+  useEffect(() => {
+    return () => {
+      if (syncFrameRef.current != null) {
+        cancelAnimationFrame(syncFrameRef.current);
+      }
+    };
+  }, []);
+
+  const commitBodyChange = (next: string) => {
+    setDraftBody(next);
+    if (!note) return;
+    if (!settings.smoothTyping) {
+      onChange(next);
+      return;
+    }
+    if (syncFrameRef.current != null) {
+      cancelAnimationFrame(syncFrameRef.current);
+    }
+    syncFrameRef.current = requestAnimationFrame(() => {
+      onChange(next);
+      syncFrameRef.current = null;
+    });
+  };
 
   const settingsContent = useMemo(() => {
     if (settingsSection === "editor") {
@@ -89,9 +139,22 @@ export default function Editor({
               Word wrap
             </span>
             <input
+              className="ow-setting-toggle"
               type="checkbox"
               checked={settings.wordWrap}
               onChange={(event) => onSettingsChange({ wordWrap: event.target.checked })}
+            />
+          </label>
+          <label className="ow-setting-row">
+            <span>
+              <Type size={14} />
+              Smooth typing
+            </span>
+            <input
+              className="ow-setting-toggle"
+              type="checkbox"
+              checked={settings.smoothTyping}
+              onChange={(event) => onSettingsChange({ smoothTyping: event.target.checked })}
             />
           </label>
           <label className="ow-setting-row">
@@ -100,6 +163,7 @@ export default function Editor({
               Line numbers
             </span>
             <input
+              className="ow-setting-toggle"
               type="checkbox"
               checked={settings.showLineNumbers}
               onChange={(event) => onSettingsChange({ showLineNumbers: event.target.checked })}
@@ -111,6 +175,7 @@ export default function Editor({
               Relative line numbers
             </span>
             <input
+              className="ow-setting-toggle"
               type="checkbox"
               checked={settings.relativeLineNumbers}
               onChange={(event) =>
@@ -124,6 +189,7 @@ export default function Editor({
               Spellcheck
             </span>
             <input
+              className="ow-setting-toggle"
               type="checkbox"
               checked={settings.spellCheck}
               onChange={(event) => onSettingsChange({ spellCheck: event.target.checked })}
@@ -135,6 +201,7 @@ export default function Editor({
               Soft tabs
             </span>
             <input
+              className="ow-setting-toggle"
               type="checkbox"
               checked={settings.softTabs}
               onChange={(event) => onSettingsChange({ softTabs: event.target.checked })}
@@ -260,9 +327,73 @@ export default function Editor({
             <Code2 size={16} />
             Keybinds
           </h3>
-          <p>`Ctrl/Cmd + S`: Save now</p>
+          <p>`Ctrl/Cmd + S`: Save</p>
+          <p>`Ctrl/Cmd + Enter`: Execute</p>
+          <p>`Ctrl/Cmd + L`: Clear editor</p>
           <p>`Tab`: Insert tab/spaces</p>
+          <p>`Shift + Tab`: Outdent selection (coming soon)</p>
+          <p>`Alt + Up/Down`: Move line (coming soon)</p>
           <p>`Right click`: File context menu actions</p>
+        </div>
+      );
+    }
+    if (settingsSection === "opiumware") {
+      return (
+        <div className="ow-settings-panel">
+          <h3>
+            <Plug size={16} />
+            Opiumware Ports
+          </h3>
+          <label className="ow-setting-row">
+            <span>
+              <Plug size={14} />
+              Active port
+              <span
+                className={`ow-port-indicator ${attachedPorts.includes(selectedPort) ? "attached" : "detached"}`}
+                title={attachedPorts.includes(selectedPort) ? "Attached" : "Detached"}
+              />
+            </span>
+            <select
+              className="ow-port-select"
+              value={selectedPort}
+              onChange={(event) => onSelectPort(Number(event.target.value))}
+            >
+              {ports.map((port) => (
+                <option key={port} value={port}>
+                  {port}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="ow-setting-row">
+            <span>
+              <Plug size={14} />
+              Attach mode
+            </span>
+            <select
+              className="ow-port-select"
+              value={attachMode}
+              onChange={(event) =>
+                onAttachModeChange(event.target.value as "selected" | "available")
+              }
+            >
+              <option value="selected">Selected port</option>
+              <option value="available">Attach to available port</option>
+            </select>
+          </label>
+          <label className="ow-setting-row">
+            <span>
+              <Plug size={14} />
+              Auto attach to available port
+            </span>
+            <input
+              className="ow-setting-toggle"
+              type="checkbox"
+              checked={settings.autoAttach}
+              onChange={(event) => onSettingsChange({ autoAttach: event.target.checked })}
+            />
+          </label>
+          <p>{portStatus}</p>
         </div>
       );
     }
@@ -278,6 +409,7 @@ export default function Editor({
             Save on blur
           </span>
           <input
+            className="ow-setting-toggle"
             type="checkbox"
             checked={settings.autosaveOnBlur}
             onChange={(event) => onSettingsChange({ autosaveOnBlur: event.target.checked })}
@@ -307,6 +439,7 @@ export default function Editor({
             Trim trailing whitespace
           </span>
           <input
+            className="ow-setting-toggle"
             type="checkbox"
             checked={settings.trimTrailingWhitespaceOnSave}
             onChange={(event) =>
@@ -320,6 +453,7 @@ export default function Editor({
             Confirm before delete
           </span>
           <input
+            className="ow-setting-toggle"
             type="checkbox"
             checked={settings.confirmBeforeDelete}
             onChange={(event) =>
@@ -333,6 +467,7 @@ export default function Editor({
             Show status bar
           </span>
           <input
+            className="ow-setting-toggle"
             type="checkbox"
             checked={settings.showStatusBar}
             onChange={(event) => onSettingsChange({ showStatusBar: event.target.checked })}
@@ -342,7 +477,20 @@ export default function Editor({
         <code>opiumware/autosave/default</code>
       </div>
     );
-  }, [settingsSection, settings, theme, onSettingsChange, onThemeChange]);
+  }, [
+    settingsSection,
+    settings,
+    theme,
+    onSettingsChange,
+    onThemeChange,
+    ports,
+    selectedPort,
+    attachedPorts,
+    attachMode,
+    onSelectPort,
+    onAttachModeChange,
+    portStatus,
+  ]);
 
   if (activeTab === "settings") {
     return (
@@ -417,6 +565,7 @@ export default function Editor({
               <p>Game: {selectedScript.game}</p>
               <p>Views: {selectedScript.views.toLocaleString()}</p>
               <p>Verified: {selectedScript.verified ? "Yes" : "No"}</p>
+              <pre className="ow-script-preview">{selectedScript.script.slice(0, 2200)}</pre>
               <div className="ow-toolbar-actions">
                 <button
                   className="ow-toolbar-btn"
@@ -427,7 +576,6 @@ export default function Editor({
                   Copy To Code Editor
                 </button>
               </div>
-              <pre className="ow-script-preview">{selectedScript.script.slice(0, 2200)}</pre>
             </div>
           ) : (
             <div className="ow-editor-empty">Select a script from the library list.</div>
@@ -462,22 +610,69 @@ export default function Editor({
             {note.title || "untitled.ts"}
           </span>
           <div className="ow-toolbar-actions">
+            <button
+              className="ow-toolbar-btn"
+              onClick={() => onExecuteScript(draftBody)}
+              type="button"
+            >
+              <Play size={13} />
+              Execute
+            </button>
+            <button className="ow-toolbar-btn" onClick={onAttachPort} type="button">
+              <Plug size={13} />
+              Attach
+            </button>
+            <button className="ow-toolbar-btn" onClick={onClearCurrent} type="button">
+              <Eraser size={13} />
+              Clear
+            </button>
             <button className="ow-toolbar-btn" onClick={onSaveNow} type="button">
               <Save size={13} />
               Save
             </button>
-            <button className="ow-toolbar-btn" onClick={onDownloadCurrentFile} type="button">
-              <Download size={13} />
-              Export
-            </button>
-            <span className="ow-toolbar-save">Autosaving...</span>
+            <span className="ow-toolbar-save">
+              Port:
+              {ports.length > 1 ? (
+                <select
+                  className="ow-port-select"
+                  value={selectedPort}
+                  onChange={(event) => onSelectPort(Number(event.target.value))}
+                >
+                  {ports.map((port) => (
+                    <option key={port} value={port}>
+                      {port}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <strong> {selectedPort}</strong>
+              )}
+              <span
+                className={`ow-port-indicator ${attachedPorts.includes(selectedPort) ? "attached" : "detached"}`}
+                title={attachedPorts.includes(selectedPort) ? "Attached" : "Detached"}
+              />
+              <strong>{attachedPorts.length ? ` attached:${attachedPorts.length}` : " detached"}</strong>
+            </span>
           </div>
         </div>
       </header>
       <div className="ow-editor-workspace">
         {settings.showLineNumbers && (
-          <div className="ow-line-gutter" aria-hidden="true">
-            {note.body.split("\n").map((_, index) => {
+          <div
+            className="ow-line-gutter"
+            ref={lineGutterRef}
+            aria-hidden="true"
+            style={{
+              fontSize: `${settings.fontSize}px`,
+              lineHeight: settings.lineHeight,
+              padding: `${settings.editorPadding}px 6px`,
+              fontFamily:
+                settings.fontFamily === "system"
+                  ? '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif'
+                  : '"SF Mono", "JetBrains Mono", Menlo, Consolas, monospace',
+            }}
+          >
+            {draftBody.split("\n").map((_, index) => {
               const line = index + 1;
               const value = settings.relativeLineNumbers
                 ? line === cursorLine
@@ -490,18 +685,33 @@ export default function Editor({
         )}
         <textarea
           ref={textAreaRef}
-          className="ow-editor-textarea"
-          value={note.body}
+          className={`ow-editor-textarea ${settings.smoothTyping ? "smooth" : ""}`}
+          value={draftBody}
           wrap={settings.wordWrap ? "soft" : "off"}
           onKeyDown={(event) => {
+            if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+              event.preventDefault();
+              onSaveNow();
+              return;
+            }
+            if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "l") {
+              event.preventDefault();
+              onClearCurrent();
+              return;
+            }
+            if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+              event.preventDefault();
+              onExecuteScript(draftBody);
+              return;
+            }
             if (event.key === "Tab") {
               event.preventDefault();
               const target = event.currentTarget;
               const start = target.selectionStart;
               const end = target.selectionEnd;
               const insertion = settings.softTabs ? " ".repeat(settings.tabSize) : "\t";
-              const next = note.body.slice(0, start) + insertion + note.body.slice(end);
-              onChange(next);
+              const next = draftBody.slice(0, start) + insertion + draftBody.slice(end);
+              commitBodyChange(next);
               requestAnimationFrame(() => {
                 target.selectionStart = target.selectionEnd = start + insertion.length;
               });
@@ -515,7 +725,11 @@ export default function Editor({
             const text = event.currentTarget.value.slice(0, event.currentTarget.selectionStart);
             setCursorLine(text.split("\n").length);
           }}
-          onChange={(event) => onChange(event.target.value)}
+          onChange={(event) => commitBodyChange(event.target.value)}
+          onScroll={(event) => {
+            if (!lineGutterRef.current) return;
+            lineGutterRef.current.scrollTop = event.currentTarget.scrollTop;
+          }}
           onBlur={() => {
             if (settings.autosaveOnBlur) onSaveNow();
           }}
@@ -539,7 +753,7 @@ export default function Editor({
             {settings.softTabs ? "Spaces" : "Tabs"}: {settings.tabSize}
           </span>
           <span>{settings.wordWrap ? "Wrap: On" : "Wrap: Off"}</span>
-          <span>{note.body.length} chars</span>
+          <span>{draftBody.length} chars</span>
         </div>
       )}
     </main>

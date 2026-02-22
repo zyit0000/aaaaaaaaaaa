@@ -22,6 +22,13 @@ interface AppState {
   activeNoteId: string | null;
 }
 
+interface AppToast {
+  id: string;
+  message: string;
+  level: "success" | "error" | "info";
+  closing: boolean;
+}
+
 type Action =
   | { type: "LOAD_NOTES"; notes: Note[] }
   | { type: "CREATE_FILE"; body?: string; title?: string }
@@ -41,10 +48,12 @@ const initialState: AppState = {
 
 const defaultEditorSettings: EditorSettings = {
   wordWrap: false,
+  smoothTyping: true,
   showLineNumbers: true,
   relativeLineNumbers: false,
   spellCheck: false,
   autosaveOnBlur: true,
+  autoAttach: false,
   softTabs: true,
   trimTrailingWhitespaceOnSave: false,
   confirmBeforeDelete: true,
@@ -56,6 +65,7 @@ const defaultEditorSettings: EditorSettings = {
   fontFamily: "mono",
   autosaveMs: 300,
 };
+const fallbackPorts = [8392, 8393, 8394, 8395, 8396, 8397];
 
 function toFileName(title: string, index: number): string {
   const normalized = title
@@ -230,6 +240,12 @@ export default function App() {
   const [hasMoreScripts, setHasMoreScripts] = useState(true);
   const [loadingScripts, setLoadingScripts] = useState(false);
   const [selectedScriptId, setSelectedScriptId] = useState<string | null>(null);
+  const [ports, setPorts] = useState<number[]>(fallbackPorts);
+  const [selectedPort, setSelectedPort] = useState<number>(fallbackPorts[0]);
+  const [attachedPorts, setAttachedPorts] = useState<number[]>([]);
+  const [attachMode, setAttachMode] = useState<"selected" | "available">("selected");
+  const [portStatus, setPortStatus] = useState("Detached");
+  const [toasts, setToasts] = useState<AppToast[]>([]);
   const [scriptFilters, setScriptFilters] = useState<{
     mode: "all" | "free" | "paid";
     verifiedOnly: boolean;
@@ -273,6 +289,102 @@ export default function App() {
       JSON.stringify({ ...editorSettings, theme })
     );
   }, [editorSettings, theme]);
+
+  useEffect(() => {
+    void fetch("/opiumwareapi.js")
+      .then((res) => (res.ok ? res.text() : ""))
+      .then((text) => {
+        if (!text) return;
+        const arrayMatch = text.match(/DEFAULT_PORTS\s*=\s*\[([^\]]+)\]/);
+        if (!arrayMatch?.[1]) return;
+        const found = arrayMatch[1]
+          .split(",")
+          .map((value) => Number(value.trim()))
+          .filter((port) => Number.isInteger(port) && port > 0);
+        if (found.length === 0) return;
+        setPorts(found);
+        setSelectedPort((prev) => (found.includes(prev) ? prev : found[0]));
+      })
+      .catch(() => {
+        setPorts(fallbackPorts);
+        setSelectedPort((prev) => (fallbackPorts.includes(prev) ? prev : fallbackPorts[0]));
+      });
+  }, []);
+
+  useEffect(() => {
+    if (!ports.includes(selectedPort)) {
+      setSelectedPort(ports[0] ?? 8392);
+    }
+  }, [ports, selectedPort]);
+
+  const pushToast = useCallback((message: string, level: AppToast["level"]) => {
+    const id = generateId();
+    setToasts((prev) => [...prev, { id, message, level, closing: false }]);
+    setTimeout(() => {
+      setToasts((prev) =>
+        prev.map((item) => (item.id === id ? { ...item, closing: true } : item))
+      );
+    }, 9700);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((item) => item.id !== id));
+    }, 10050);
+  }, []);
+
+  const callPortApi = useCallback(async (port: number, action: "attach" | "execute", script: string) => {
+    const paths =
+      action === "attach"
+        ? ["/attach", "/api/attach", "/v1/attach"]
+        : ["/execute", "/api/execute", "/v1/execute"];
+    for (const path of paths) {
+      try {
+        const response = await fetch(`http://127.0.0.1:${port}${path}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body:
+            action === "attach"
+              ? JSON.stringify({})
+              : JSON.stringify({ script, code: script }),
+        });
+        if (response.ok) return true;
+      } catch {
+        // try next path
+      }
+    }
+    return false;
+  }, []);
+
+  const attachToPort = useCallback(
+    async (port: number) => {
+      const ok = await callPortApi(port, "attach", "");
+      if (ok) {
+        setAttachedPorts((prev) => (prev.includes(port) ? prev : [...prev, port]));
+        setPortStatus(`Attached ${port}`);
+        pushToast(`Attached to ${port}`, "success");
+        return true;
+      }
+      setPortStatus(`Attach failed ${port}`);
+      pushToast(`Attach failed on ${port}`, "error");
+      return false;
+    },
+    [callPortApi, pushToast]
+  );
+
+  const attachToAvailable = useCallback(async () => {
+    const attached: number[] = [];
+    for (const port of ports) {
+      const ok = await callPortApi(port, "attach", "");
+      if (ok) attached.push(port);
+    }
+    setAttachedPorts(attached);
+    if (attached.length > 0) {
+      setPortStatus(`Attached ${attached.length} ports`);
+      pushToast(`Attached ${attached.length} available ports`, "success");
+      return attached;
+    }
+    setPortStatus("Attach failed on available ports");
+    pushToast("Attach failed on available ports", "error");
+    return [];
+  }, [ports, callPortApi, pushToast]);
 
   const fetchScriptPage = useCallback(
     async (page: number, replace: boolean) => {
@@ -397,6 +509,41 @@ export default function App() {
     }, 220);
     return () => clearTimeout(timer);
   }, [activeTab, scriptQuery, refreshScripts]);
+
+  useEffect(() => {
+    if (!editorSettings.autoAttach) return;
+    if (attachMode === "available") {
+      if (attachedPorts.length > 0) return;
+      void attachToAvailable();
+      return;
+    }
+    if (attachedPorts.includes(selectedPort)) return;
+    void attachToPort(selectedPort);
+  }, [editorSettings.autoAttach, attachMode, attachedPorts, selectedPort, attachToPort, attachToAvailable]);
+
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (attachedPorts.length === 0) return;
+      const shouldClosePorts = window.confirm(
+        "Close all Opiumware ports before exit?\n\nOK = close ports\nCancel = leave them attached"
+      );
+      if (!shouldClosePorts) return;
+      const targets = Array.from(new Set([...attachedPorts, ...ports]));
+      const detachPaths = ["/detach", "/close", "/api/detach", "/api/close", "/v1/detach", "/v1/close"];
+      for (const port of targets) {
+        for (const path of detachPaths) {
+          void fetch(`http://127.0.0.1:${port}${path}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({}),
+            keepalive: true,
+          }).catch(() => {});
+        }
+      }
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [attachedPorts, ports]);
 
   useEffect(() => {
     const onMouseMove = (event: MouseEvent) => {
@@ -527,16 +674,12 @@ export default function App() {
   return (
     <div className="ow-shell">
       <header className="ow-topbar">
-        <div className="ow-topbar-left">
-          <span className="ow-dot red" />
-          <span className="ow-dot yellow" />
-          <span className="ow-dot green" />
-        </div>
+        <div className="ow-topbar-left" data-tauri-drag-region />
         <div className="ow-topbar-center">
           {activeTabMeta.icon}
           <span>{activeTabMeta.label}</span>
         </div>
-        <div className="ow-topbar-right">Catalina+ / Windows</div>
+        <div className="ow-topbar-right" data-tauri-drag-region />
       </header>
       <div
         className={`ow-app ${primaryCollapsed ? "primary-collapsed" : ""}`}
@@ -630,19 +773,71 @@ export default function App() {
           onThemeChange={setTheme}
           onSettingsChange={(next) => setEditorSettings((prev) => ({ ...prev, ...next }))}
           onSaveNow={() => persistNotesNow(state.notes)}
-          onDownloadCurrentFile={() => {
-            if (!activeNote) return;
-            const blob = new Blob([activeNote.body], { type: "text/plain;charset=utf-8" });
-            const url = URL.createObjectURL(blob);
-            const link = document.createElement("a");
-            link.href = url;
-            link.download = activeNote.title || "untitled.ts";
-            link.click();
-            URL.revokeObjectURL(url);
-          }}
           onChange={(body) => {
             if (!state.activeNoteId) return;
             dispatch({ type: "UPDATE_NOTE", id: state.activeNoteId, body });
+          }}
+          ports={ports}
+          selectedPort={selectedPort}
+          attachedPorts={attachedPorts}
+          portStatus={portStatus}
+          attachMode={attachMode}
+          onSelectPort={setSelectedPort}
+          onAttachModeChange={setAttachMode}
+          onAttachPort={async () => {
+            if (attachMode === "available") {
+              await attachToAvailable();
+              return;
+            }
+            await attachToPort(selectedPort);
+          }}
+          onExecuteScript={async (script) => {
+            let targets =
+              attachMode === "available"
+                ? [...attachedPorts]
+                : [attachedPorts.includes(selectedPort) ? selectedPort : selectedPort];
+            if (targets.length === 0 && editorSettings.autoAttach) {
+              if (attachMode === "available") {
+                targets = await attachToAvailable();
+              } else {
+                const okAttach = await attachToPort(selectedPort);
+                if (okAttach) targets = [selectedPort];
+              }
+            }
+            if (targets.length === 0) {
+              setPortStatus("No attached ports");
+              pushToast("No attached ports", "error");
+              return;
+            }
+            const results = await Promise.all(
+              targets.map(async (port) => ({
+                port,
+                ok: await callPortApi(port, "execute", script),
+              }))
+            );
+            const success = results.filter((item) => item.ok).map((item) => item.port);
+            const failed = results.filter((item) => !item.ok).map((item) => item.port);
+            if (success.length > 0 && failed.length === 0) {
+              setPortStatus(`Executed ${success.length} port(s)`);
+              pushToast(`Executed on ${success.join(", ")}`, "success");
+              return;
+            }
+            if (success.length > 0) {
+              setPortStatus(`Executed ${success.length}, failed ${failed.length}`);
+              pushToast(
+                `Executed: ${success.join(", ")} | Failed: ${failed.join(", ")}`,
+                "info"
+              );
+              return;
+            }
+            setPortStatus(`Execute failed on ${failed.join(", ")}`);
+            pushToast(`Execute failed on ${failed.join(", ")}`, "error");
+          }}
+          onClearCurrent={() => {
+            if (!state.activeNoteId) return;
+            dispatch({ type: "UPDATE_NOTE", id: state.activeNoteId, body: "" });
+            setPortStatus("Cleared editor");
+            pushToast("Editor cleared", "info");
           }}
           selectedScript={selectedScript}
           onCreateFileFromScript={(script) => {
@@ -650,6 +845,16 @@ export default function App() {
             setActiveTab("code");
           }}
         />
+      </div>
+      <div className="ow-toast-stack">
+        {toasts.map((toast) => (
+          <div
+            key={toast.id}
+            className={`ow-toast ${toast.level} ${toast.closing ? "closing" : "enter"}`}
+          >
+            {toast.message}
+          </div>
+        ))}
       </div>
     </div>
   );

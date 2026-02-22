@@ -269,23 +269,22 @@ body.ow-theme-rose {
   display: grid;
   grid-template-rows: 34px minmax(0, 1fr);
   overflow: hidden;
+  border-radius: 12px;
 }
 
 .ow-topbar {
   display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  grid-template-columns: 78px 1fr 14px;
   align-items: center;
   border-bottom: 1px solid var(--primary-border);
   background: var(--primary-bg);
   color: var(--toolbar-fg);
-  padding: 0 10px;
+  padding: 0;
   font-size: 11px;
 }
 
 .ow-topbar-left {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+  height: 100%;
 }
 
 .ow-dot {
@@ -312,11 +311,11 @@ body.ow-theme-rose {
   align-items: center;
   gap: 6px;
   justify-self: center;
+  pointer-events: none;
 }
 
 .ow-topbar-right {
-  justify-self: end;
-  color: var(--muted);
+  height: 100%;
 }
 
 .ow-app {
@@ -328,6 +327,8 @@ body.ow-theme-rose {
   color: var(--app-fg);
   transition: grid-template-columns 240ms cubic-bezier(0.22, 1, 0.36, 1);
   overflow: hidden;
+  border-bottom-left-radius: 12px;
+  border-bottom-right-radius: 12px;
 }
 
 .ow-app.primary-collapsed {
@@ -780,6 +781,65 @@ body.ow-theme-rose {
 .ow-toolbar-save {
   font-size: 11px;
   color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ow-port-select {
+  height: 22px;
+  border: 1px solid var(--chip-border);
+  border-radius: 8px;
+  background: var(--chip-bg);
+  color: var(--toolbar-fg);
+  padding: 0 6px;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+}
+
+.ow-port-indicator {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  display: inline-block;
+  border: 1px solid var(--chip-border);
+}
+
+.ow-port-indicator.attached {
+  background: #28c840;
+  border-color: #28c840;
+}
+
+.ow-port-indicator.detached {
+  background: #ff5f57;
+  border-color: #ff5f57;
+}
+
+.ow-port-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ow-port-row input {
+  width: 110px;
+  height: 28px;
+  border: 1px solid var(--chip-border);
+  border-radius: 6px;
+  background: var(--chip-bg);
+  color: var(--toolbar-fg);
+  padding: 0 8px;
+}
+
+.ow-port-row button {
+  border: 1px solid var(--chip-border);
+  border-radius: 6px;
+  height: 28px;
+  background: var(--chip-bg);
+  color: var(--toolbar-fg);
+  padding: 0 10px;
+  cursor: pointer;
 }
 
 .ow-editor-workspace {
@@ -799,11 +859,18 @@ body.ow-theme-rose {
   line-height: 1.55;
   padding: 14px 6px;
   text-align: right;
-  overflow: hidden;
+  overflow: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
 
 .ow-line-gutter span {
   display: block;
+}
+
+.ow-line-gutter::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
 
 .ow-editor-textarea {
@@ -816,6 +883,27 @@ body.ow-theme-rose {
   color: var(--textarea-fg);
   padding: 14px;
   font-size: 14px;
+  scrollbar-color: var(--chip-border) var(--textarea-bg);
+}
+
+.ow-editor-textarea.smooth {
+  transition: color 80ms ease, background-color 120ms ease;
+  scroll-behavior: smooth;
+}
+
+.ow-editor-textarea::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.ow-editor-textarea::-webkit-scrollbar-track {
+  background: var(--textarea-bg);
+}
+
+.ow-editor-textarea::-webkit-scrollbar-thumb {
+  background: var(--chip-border);
+  border-radius: 999px;
+  border: 2px solid var(--textarea-bg);
 }
 
 .ow-editor-empty {
@@ -879,6 +967,46 @@ body.ow-theme-rose {
   padding: 0 8px;
   background: var(--chip-bg);
   color: var(--toolbar-fg);
+}
+
+.ow-setting-toggle {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 40px;
+  height: 22px;
+  border-radius: 999px;
+  border: 1px solid var(--chip-border);
+  background: var(--chip-bg);
+  position: relative;
+  cursor: pointer;
+  transition: background-color 180ms ease, border-color 180ms ease;
+}
+
+.ow-setting-toggle::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--toolbar-fg);
+  transition: transform 180ms ease, background-color 180ms ease;
+}
+
+.ow-setting-toggle:checked {
+  background: var(--secondary-active-border);
+  border-color: var(--secondary-active-border);
+}
+
+.ow-setting-toggle:checked::after {
+  transform: translateX(18px);
+  background: #ffffff;
+}
+
+.ow-setting-toggle:focus-visible {
+  outline: 2px solid var(--secondary-active-border);
+  outline-offset: 2px;
 }
 
 .ow-theme-buttons {
@@ -1051,6 +1179,71 @@ body.ow-theme-rose {
   gap: 6px;
   font-size: 11px;
   color: var(--muted);
+}
+
+.ow-toast-stack {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 4000;
+  pointer-events: none;
+}
+
+.ow-toast {
+  min-width: 220px;
+  max-width: 360px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  font-size: 12px;
+  border: 1px solid var(--chip-border);
+  background: var(--chip-bg);
+  color: var(--toolbar-fg);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.32);
+}
+
+.ow-toast.success {
+  border-color: #2d8b46;
+}
+
+.ow-toast.error {
+  border-color: #9a3a3a;
+}
+
+.ow-toast.info {
+  border-color: #3f5f93;
+}
+
+.ow-toast.enter {
+  animation: ow-toast-in 220ms ease-out forwards;
+}
+
+.ow-toast.closing {
+  animation: ow-toast-out 260ms ease-in forwards;
+}
+
+@keyframes ow-toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(22px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+@keyframes ow-toast-out {
+  from {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(22px) scale(0.98);
+  }
 }
 
 @media (max-width: 1100px) {

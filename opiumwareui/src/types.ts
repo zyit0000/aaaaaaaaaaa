@@ -11,7 +11,7 @@ export interface Note {
 
 export type AppTab = "code" | "library" | "settings";
 
-export type SettingsSection = "editor" | "theme" | "files" | "keybinds";
+export type SettingsSection = "editor" | "theme" | "files" | "keybinds" | "opiumware";
 
 export type AppTheme =
   | "dark"
@@ -25,10 +25,12 @@ export type AppTheme =
 
 export interface EditorSettings {
   wordWrap: boolean;
+  smoothTyping: boolean;
   showLineNumbers: boolean;
   relativeLineNumbers: boolean;
   spellCheck: boolean;
   autosaveOnBlur: boolean;
+  autoAttach: boolean;
   softTabs: boolean;
   trimTrailingWhitespaceOnSave: boolean;
   confirmBeforeDelete: boolean;
