@@ -126,6 +126,7 @@ fn main() {
             write_downloads_version,
             open_terminal,
             run_install_script,
+            fetch_url_text,
         ])
         .run(tauri::generate_context!())
         .expect("Error while running Tauri application");
@@ -295,4 +296,15 @@ async fn run_install_script(repo: Option<String>) -> Result<String, String> {
 
     #[allow(unreachable_code)]
     Err("Install script fallback is only available on macOS".to_string())
+}
+
+#[tauri::command]
+async fn fetch_url_text(url: String) -> Result<String, String> {
+    let response = reqwest::get(url)
+        .await
+        .map_err(|e| e.to_string())?;
+    if !response.status().is_success() {
+        return Err(format!("HTTP {}", response.status()));
+    }
+    response.text().await.map_err(|e| e.to_string())
 }

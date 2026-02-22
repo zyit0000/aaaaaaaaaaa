@@ -468,6 +468,8 @@ export default function App() {
         }
         setHasLocalVersionFile(true);
         setDownloadsVersion(parsed);
+        setLocalVersion(parsed);
+        localStorage.setItem("opiumware/version/current", parsed);
       })
       .catch(() => {
         setHasLocalVersionFile(false);
@@ -639,13 +641,17 @@ export default function App() {
         setMissingVersionPromptOpen(true);
         return;
       }
-      const metaRes = await fetch(REMOTE_UPDATE_JSON_URL).catch(() => null);
-      const localMetaRes = !metaRes || !metaRes.ok
-        ? await fetch("/updateversion.json").catch(() => null)
-        : null;
-      const response = metaRes && metaRes.ok ? metaRes : localMetaRes;
-      if (!response || !response.ok) return;
-      const meta = (await response.json()) as UpdateVersionJson;
+      let meta: UpdateVersionJson | null = null;
+      try {
+        const text = await invoke<string>("fetch_url_text", { url: REMOTE_UPDATE_JSON_URL });
+        meta = JSON.parse(text) as UpdateVersionJson;
+      } catch {
+        const localMetaRes = await fetch("/updateversion.json").catch(() => null);
+        if (localMetaRes && localMetaRes.ok) {
+          meta = (await localMetaRes.json()) as UpdateVersionJson;
+        }
+      }
+      if (!meta) return;
       const remote = String(
         meta.latestUiVersion ?? meta.uiVersion ?? meta.version ?? ""
       ).trim();

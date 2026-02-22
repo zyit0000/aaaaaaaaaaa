@@ -70,12 +70,15 @@ pick_url() {
 log_info "Fetching latest release for ${REPO}..."
 JSON="$(curl -fsSL "${API_URL}" || true)"
 
-mapfile -t URLS < <(
-  printf "%s" "${JSON}" \
-    | grep -Eo '"browser_download_url":[[:space:]]*"[^"]+"' \
-    | sed -E 's/.*"([^"]+)"/\1/' \
-    | grep -vE '\.sig$' || true
-)
+URLS=()
+while IFS= read -r line; do
+  URLS+=("${line}")
+done <<EOF
+$(printf "%s" "${JSON}" \
+  | grep -Eo '"browser_download_url":[[:space:]]*"[^"]+"' \
+  | sed -E 's/.*"([^"]+)"/\1/' \
+  | grep -vE '\.sig$' || true)
+EOF
 
 DOWNLOAD_URL=""
 if [[ "${#URLS[@]}" -gt 0 ]]; then
@@ -108,7 +111,8 @@ log_info "Downloading ${FILE_NAME}..."
 curl -fL "${DOWNLOAD_URL}" -o "${ASSET_PATH}"
 
 DMG_PATH=""
-case "${FILE_NAME,,}" in
+FILE_NAME_LOWER="$(printf "%s" "${FILE_NAME}" | tr '[:upper:]' '[:lower:]')"
+case "${FILE_NAME_LOWER}" in
   *.dmg)
     DMG_PATH="${ASSET_PATH}"
     ;;
