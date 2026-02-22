@@ -7,13 +7,11 @@ set -euo pipefail
 #
 # Optional override:
 #   OPIUMWARE_REPO="owner/repo"
-#   OPIUMWARE_DIRECT_URL="https://.../asset.zip"
 clear
 
 REPO="${OPIUMWARE_REPO:-zyit0000/aaaaaaaaaaa}"
 API_URL="https://api.github.com/repos/${REPO}/releases/latest"
 RAW_VERSION_URL="https://raw.githubusercontent.com/${REPO}/main/version.txt"
-DIRECT_URL="${OPIUMWARE_DIRECT_URL:-}"
 
 CLR_RED="$(printf '\033[31m')"
 CLR_GRN="$(printf '\033[32m')"
@@ -69,62 +67,6 @@ pick_url() {
   return 1
 }
 
-extract_dmg_from_archive() {
-  local input_archive="$1"
-  local root_dir="$2"
-  local work_dir="${root_dir}/work"
-  mkdir -p "${work_dir}"
-  cp "${input_archive}" "${work_dir}/seed.zip"
-
-  local depth=0
-  while true; do
-    depth=$((depth + 1))
-    if [[ "${depth}" -gt 80 ]]; then
-      log_err "Archive nesting limit reached while searching for .dmg."
-      return 1
-    fi
-
-    # First priority: if any dmg exists at this stage, return it immediately.
-    local found_dmg
-    found_dmg="$(find "${work_dir}" -type f -iname '*.dmg' | head -n 1 || true)"
-    if [[ -n "${found_dmg}" ]]; then
-      printf "%s" "${found_dmg}"
-      return 0
-    fi
-
-    # Collect all zip archives currently available (bash 3.2 compatible).
-    local zip_files=()
-    while IFS= read -r z; do
-      zip_files+=("${z}")
-    done < <(find "${work_dir}" -type f -iname '*.zip' || true)
-
-    if [[ "${#zip_files[@]}" -eq 0 ]]; then
-      return 1
-    fi
-
-    local next_stage="${root_dir}/stage-${depth}"
-    mkdir -p "${next_stage}"
-    local extracted_any=0
-
-    for z in "${zip_files[@]}"; do
-      local out_dir
-      out_dir="$(mktemp -d "${next_stage}/unzipped-XXXXXX")"
-      if unzip -q "${z}" -d "${out_dir}"; then
-        extracted_any=1
-      fi
-      rm -f "${z}"
-    done
-
-    if [[ "${extracted_any}" -eq 0 ]]; then
-      return 1
-    fi
-
-    # Fold the next stage back into work directory and continue.
-    find "${next_stage}" -mindepth 1 -maxdepth 1 -exec mv "{}" "${work_dir}/" \;
-    rm -rf "${next_stage}"
-  done
-}
-
 log_info "Fetching latest release for ${REPO}..."
 JSON="$(curl -fsSL "${API_URL}" || true)"
 RELEASE_VERSION="$(printf "%s" "${JSON}" | sed -nE 's/.*"tag_name":[[:space:]]*"([^"]+)".*/\1/p' | head -n 1)"
@@ -146,21 +88,10 @@ if [[ "${#URLS[@]}" -gt 0 ]]; then
   if [[ -z "${DOWNLOAD_URL}" ]]; then
     DOWNLOAD_URL="$(pick_url '\.dmg$' "${URLS[@]}" || true)"
   fi
-  if [[ -z "${DOWNLOAD_URL}" ]]; then
-    DOWNLOAD_URL="$(pick_url '(x64|x86_64|amd64|intel|darwin|mac).*\.(zip)$' "${URLS[@]}" || true)"
-  fi
-  if [[ -z "${DOWNLOAD_URL}" ]]; then
-    DOWNLOAD_URL="$(pick_url '\.zip$' "${URLS[@]}" || true)"
-  fi
-fi
-
-if [[ -z "${DOWNLOAD_URL}" && -n "${DIRECT_URL}" ]]; then
-  log_warn "Could not find matching release asset. Falling back to direct URL."
-  DOWNLOAD_URL="${DIRECT_URL}"
 fi
 
 if [[ -z "${DOWNLOAD_URL}" ]]; then
-  log_err "No downloadable URL found."
+  log_err "No .dmg asset found in latest release."
   exit 1
 fi
 
@@ -176,27 +107,7 @@ fi
 log_info "Downloading ${FILE_NAME}..."
 curl -fL "${DOWNLOAD_URL}" -o "${ASSET_PATH}"
 
-DMG_PATH=""
-FILE_NAME_LOWER="$(printf "%s" "${FILE_NAME}" | tr '[:upper:]' '[:lower:]')"
-case "${FILE_NAME_LOWER}" in
-  *.dmg)
-    DMG_PATH="${ASSET_PATH}"
-    ;;
-  *.zip)
-    EXTRACT_DIR="${TMP_DIR}/extract"
-    mkdir -p "${EXTRACT_DIR}"
-    log_info "Extracting archive(s) until .dmg is found..."
-    DMG_PATH="$(extract_dmg_from_archive "${ASSET_PATH}" "${EXTRACT_DIR}" || true)"
-    if [[ -z "${DMG_PATH}" ]]; then
-      log_err "Archive extracted, but no .dmg found inside."
-      exit 1
-    fi
-    ;;
-  *)
-    log_err "Unsupported asset type: ${FILE_NAME}"
-    exit 1
-    ;;
-esac
+DMG_PATH="${ASSET_PATH}"
 
 log_info "Mounting DMG..."
 ATTACH_OUT="$(hdiutil attach "${DMG_PATH}" -nobrowse 2>&1 || true)"

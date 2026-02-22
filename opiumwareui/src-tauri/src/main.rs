@@ -139,6 +139,7 @@ fn main() {
             roblox_launch_instance,
             request_screen_capture_access,
             capture_screen_preview,
+            read_functions_txt,
         ])
         .run(tauri::generate_context!())
         .expect("Error while running Tauri application");
@@ -529,11 +530,61 @@ async fn request_screen_capture_access() -> Result<bool, String> {
 async fn capture_screen_preview() -> Result<Option<String>, String> {
     #[cfg(target_os = "macos")]
     {
+        fn roblox_window_rect() -> Result<Option<(i32, i32, i32, i32)>, String> {
+            // Try both common process names seen for Roblox desktop client.
+            let script = r#"
+set targetNames to {"Roblox", "RobloxPlayer"}
+tell application "System Events"
+  repeat with n in targetNames
+    if exists (first process whose name is n) then
+      set p to first process whose name is n
+      if (count of windows of p) > 0 then
+        set w to front window of p
+        set winPos to position of w
+        set winSize to size of w
+        return (item 1 of winPos as text) & "," & (item 2 of winPos as text) & "," & (item 1 of winSize as text) & "," & (item 2 of winSize as text)
+      end if
+    end if
+  end repeat
+end tell
+return ""
+"#;
+
+            let output = Command::new("osascript")
+                .arg("-e")
+                .arg(script)
+                .output()
+                .map_err(|e| e.to_string())?;
+            if !output.status.success() {
+                return Ok(None);
+            }
+            let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if raw.is_empty() {
+                return Ok(None);
+            }
+            let parts: Vec<&str> = raw.split(',').collect();
+            if parts.len() != 4 {
+                return Ok(None);
+            }
+            let x = parts[0].trim().parse::<i32>().map_err(|e| e.to_string())?;
+            let y = parts[1].trim().parse::<i32>().map_err(|e| e.to_string())?;
+            let w = parts[2].trim().parse::<i32>().map_err(|e| e.to_string())?;
+            let h = parts[3].trim().parse::<i32>().map_err(|e| e.to_string())?;
+            if w <= 0 || h <= 0 {
+                return Ok(None);
+            }
+            Ok(Some((x, y, w, h)))
+        }
+
         let temp_path = std::env::temp_dir().join("opiumware_screen_preview.jpg");
-        let status = Command::new("screencapture")
-            .arg("-x")
-            .arg("-t")
-            .arg("jpg")
+        let mut capture_cmd = Command::new("screencapture");
+        capture_cmd.arg("-x").arg("-t").arg("jpg");
+
+        if let Some((x, y, w, h)) = roblox_window_rect()? {
+            capture_cmd.arg("-R").arg(format!("{},{},{},{}", x, y, w, h));
+        }
+
+        let status = capture_cmd
             .arg(&temp_path)
             .status()
             .map_err(|e| e.to_string())?;
@@ -559,4 +610,32 @@ async fn capture_screen_preview() -> Result<Option<String>, String> {
     {
         Ok(None)
     }
+}
+
+#[tauri::command]
+async fn read_functions_txt(app: tauri::AppHandle) -> Result<String, String> {
+    let mut candidates = Vec::new();
+
+    if let Ok(current) = std::env::current_dir() {
+        candidates.push(current.join("functions.txt"));
+        if let Some(parent) = current.parent() {
+            candidates.push(parent.join("functions.txt"));
+            if let Some(grand) = parent.parent() {
+                candidates.push(grand.join("functions.txt"));
+            }
+        }
+    }
+
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        candidates.push(resource_dir.join("functions.txt"));
+    }
+
+    for path in candidates {
+        if path.exists() {
+            let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+            return Ok(text);
+        }
+    }
+
+    Ok(String::new())
 }

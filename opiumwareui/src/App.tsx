@@ -106,6 +106,7 @@ const REMOTE_UPDATE_JSON_URL = `${RAW_BASE}/updateversion.json`;
 const RELEASE_API_URL = `https://api.github.com/repos/${UPDATE_REPO}/releases/latest`;
 const OPIUMWARE_VERSION_JSON_URL =
   "https://raw.githubusercontent.com/norbyv1/OpiumwareInstall/main/version.json";
+const SCRIPT_PAGE_SIZE = 250;
 
 function toFileName(title: string, index: number): string {
   const normalized = title
@@ -116,6 +117,14 @@ function toFileName(title: string, index: number): string {
   return normalized || `file-${index + 1}.txt`;
 }
 
+function normalizeVersion(value: string | null | undefined): string {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/^v/, "")
+    .replace(/\s+/g, "");
+}
+
 function sortByUpdatedAt(notes: Note[]): Note[] {
   return [...notes].sort(
     (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
@@ -124,14 +133,6 @@ function sortByUpdatedAt(notes: Note[]): Note[] {
 
 function toRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
-}
-
-function textBlob(value: unknown): string {
-  try {
-    return JSON.stringify(value ?? "").toLowerCase();
-  } catch {
-    return String(value ?? "").toLowerCase();
-  }
 }
 
 function toBool(value: unknown): boolean {
@@ -254,12 +255,11 @@ function reducer(state: AppState, action: Action): AppState {
       return state.activeNoteId === action.id ? { ...state, activeNoteId: null } : state;
     case "UPDATE_NOTE": {
       const updated = sortByUpdatedAt(
-        state.notes.map((note, index) =>
+        state.notes.map((note) =>
           note.id === action.id
             ? {
                 ...note,
                 body: action.body,
-                title: toFileName(action.body.split("\n").find(Boolean) ?? note.title, index),
                 updatedAt: new Date().toISOString(),
               }
             : note
@@ -688,7 +688,7 @@ export default function App() {
       const dmg = String(meta.dmgUrl ?? meta.releaseDmgUrl ?? meta.downloadUrl ?? "").trim();
       setRemoteDmgUrl(dmg || null);
       const currentKnownVersion = downloadsVersion || localVersion;
-      if (remote === currentKnownVersion) {
+      if (normalizeVersion(remote) === normalizeVersion(currentKnownVersion)) {
         if (manual) pushToast("You are on the latest UI version.", "info");
         return;
       }
@@ -925,16 +925,16 @@ export default function App() {
           ? [
               `https://scriptblox.com/api/script/search?q=${encodeURIComponent(
                 query
-              )}&max=40&mode=all&page=${page}`,
+              )}&max=${SCRIPT_PAGE_SIZE}&mode=all&page=${page}`,
               `https://scriptblox.com/api/script/search?q=${encodeURIComponent(
                 query
-              )}&max=40&mode=all`,
+              )}&max=${SCRIPT_PAGE_SIZE}&mode=all`,
               `https://scriptblox.com/api/script/search?q=${encodeURIComponent(query)}`,
             ]
           : [
+              `https://scriptblox.com/api/script/fetch?max=${SCRIPT_PAGE_SIZE}&page=${page}`,
               `https://scriptblox.com/api/script/fetch?page=${page}`,
-              `https://scriptblox.com/api/script/fetch?max=40&page=${page}`,
-              `https://scriptblox.com/api/script/search?q=&max=40&mode=all&page=${page}`,
+              `https://scriptblox.com/api/script/search?q=&max=${SCRIPT_PAGE_SIZE}&mode=all&page=${page}`,
             ];
 
         let rawScripts: Array<Record<string, unknown>> = [];
@@ -950,13 +950,11 @@ export default function App() {
       const mappedAll: ScriptEntry[] = rawScripts.map((item, index) => {
             const game = toRecord(item.game);
             const key = toRecord(item.key);
-            const tagsBlob = textBlob(item.tags);
             const verified =
               toBool(item.verified) ||
               toBool(item.isVerified) ||
               toBool(item.verifiedScript) ||
-              hasTag(item.tags, "verified") ||
-              /\bverified\b/.test(tagsBlob);
+              hasTag(item.tags, "verified");
             const paid =
               toBool(item.paid) ||
               toBool(item.isPaid) ||
@@ -964,16 +962,14 @@ export default function App() {
               toBool(item.price) ||
               toBool(item.isPremium) ||
               hasTag(item.tags, "paid") ||
-              /\bpaid\b/.test(tagsBlob) ||
-              /\bpremium\b/.test(tagsBlob);
+              hasTag(item.tags, "premium");
             const keySystem =
               toBool(item.keySystem) ||
               toBool(item.keysystem) ||
               toBool(item.keyRequired) ||
               toBool(item.hasKeySystem) ||
               toBool(key?.system) ||
-              hasTag(item.tags, "key") ||
-              /\bkey[\s_-]?system\b/.test(tagsBlob);
+              hasTag(item.tags, "key");
             const imageUrl =
               String(
                 item.image ??
@@ -1017,7 +1013,7 @@ export default function App() {
           }
           return merged;
         });
-        setHasMoreScripts(mappedAll.length > 0);
+        setHasMoreScripts(mappedAll.length >= SCRIPT_PAGE_SIZE);
         setScriptPage(page);
         if (replace) {
           setSelectedScriptId((prev) =>
@@ -1071,7 +1067,7 @@ export default function App() {
     const matchedCount = scripts.filter((script) =>
       matchesScriptFilters(script, scriptFilters)
     ).length;
-    const needsMore = scripts.length < 250 && matchedCount < 80;
+    const needsMore = scripts.length < 1250 && matchedCount < 200;
     if (!needsMore) return;
 
     filterPrefetchingRef.current = true;
@@ -1081,11 +1077,11 @@ export default function App() {
           let page = scriptPage;
           let total = scripts.length;
           let rounds = 0;
-          while (rounds < 12 && total < 250 && hasMoreScripts) {
+          while (rounds < 8 && total < 1250 && hasMoreScripts) {
             rounds += 1;
             await fetchScriptPage(page + 1, false);
             page += 1;
-            total += 40;
+            total += SCRIPT_PAGE_SIZE;
           }
         } finally {
           filterPrefetchingRef.current = false;

@@ -151,6 +151,20 @@ const INTELLISENSE_KEYWORDS = [
   "Instance.new",
 ];
 
+function parseFunctionHints(raw: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const line of raw.split(/\r?\n/)) {
+    const value = line.trim();
+    if (!value || value.startsWith("//") || value.startsWith("#")) continue;
+    const key = value.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(value);
+  }
+  return out;
+}
+
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, "&amp;")
@@ -228,6 +242,7 @@ export default function Editor({
   const syntaxLayerRef = useRef<HTMLPreElement>(null);
   const lineGutterRef = useRef<HTMLDivElement>(null);
   const minimapRef = useRef<HTMLPreElement>(null);
+  const completionRef = useRef<HTMLDivElement>(null);
   const syncFrameRef = useRef<number | null>(null);
   const [cursorLine, setCursorLine] = useState(1);
   const [draftBody, setDraftBody] = useState(note?.body ?? "");
@@ -253,10 +268,45 @@ export default function Editor({
   const [screenCaptureGranted, setScreenCaptureGranted] = useState(false);
   const [screenCaptureChecked, setScreenCaptureChecked] = useState(false);
   const [instancePreviewImage, setInstancePreviewImage] = useState<string | null>(null);
+  const [functionHints, setFunctionHints] = useState<string[]>([]);
 
   useEffect(() => {
     const raw = localStorage.getItem("opiumware/account/confirm-remove");
     setConfirmRemove(raw !== "0");
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void invoke<string>("read_functions_txt")
+      .then((text) => {
+        if (cancelled) return;
+        const parsed = parseFunctionHints(text);
+        if (parsed.length > 0) {
+          setFunctionHints(parsed);
+          return;
+        }
+        return fetch("/functions.txt")
+          .then((res) => (res.ok ? res.text() : ""))
+          .then((fallbackText) => {
+            if (cancelled) return;
+            setFunctionHints(parseFunctionHints(fallbackText));
+          });
+      })
+      .catch(() =>
+        fetch("/functions.txt").then((res) => (res.ok ? res.text() : ""))
+      )
+      .then((text) => {
+        if (typeof text !== "string") return;
+        if (cancelled) return;
+        setFunctionHints(parseFunctionHints(text));
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setFunctionHints([]);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -274,6 +324,19 @@ export default function Editor({
       }
     };
   }, []);
+
+  useEffect(() => {
+    const onMouseDown = (event: MouseEvent) => {
+      if (!completion.open) return;
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (completionRef.current?.contains(target)) return;
+      if (textAreaRef.current?.contains(target)) return;
+      setCompletion((prev) => ({ ...prev, open: false }));
+    };
+    window.addEventListener("mousedown", onMouseDown);
+    return () => window.removeEventListener("mousedown", onMouseDown);
+  }, [completion.open]);
 
   useEffect(() => {
     if (!(activeTab === "account" && accountSection === "instances")) return;
@@ -382,31 +445,43 @@ export default function Editor({
   const updateCompletion = (
     nextText: string,
     caret: number,
+    selectionStart = caret,
+    selectionEnd = caret,
     force = false,
     scrollTop = textAreaRef.current?.scrollTop ?? 0,
     scrollLeft = textAreaRef.current?.scrollLeft ?? 0
   ) => {
-    const before = nextText.slice(0, caret);
+    const selectionActive = selectionEnd > selectionStart;
+    const before = nextText.slice(0, selectionStart);
+    const selectedText = selectionActive ? nextText.slice(selectionStart, selectionEnd).trim() : "";
     const tokenMatch = before.match(/[A-Za-z_][A-Za-z0-9_.$]*$/);
-    const token = tokenMatch?.[0] ?? "";
-    if (!force && token.length < 1) {
+    const token = selectionActive ? selectedText : tokenMatch?.[0] ?? "";
+    if (!force && token.length < 1 && !selectionActive) {
       setCompletion((prev) => ({ ...prev, open: false }));
       return;
     }
 
-    const start = caret - token.length;
-    const end = caret;
-    const symbols = new Set<string>(INTELLISENSE_KEYWORDS);
+    const start = selectionActive ? selectionStart : selectionStart - token.length;
+    const end = selectionActive ? selectionEnd : selectionStart;
+    const symbolSet = new Set<string>(INTELLISENSE_KEYWORDS);
+    const functionSet = new Set<string>(functionHints);
     const matches = nextText.match(/[A-Za-z_][A-Za-z0-9_.$]{1,}/g);
     if (matches) {
-      for (const m of matches) symbols.add(m);
+      for (const m of matches) symbolSet.add(m);
     }
 
     const needle = token.toLowerCase();
-    const items = Array.from(symbols)
-      .filter((item) => (force ? true : item.toLowerCase().startsWith(needle)))
-      .sort((a, b) => a.localeCompare(b))
-      .slice(0, 24);
+    const fnItems = Array.from(functionSet)
+      .filter((item) => (needle ? item.toLowerCase().startsWith(needle) : true))
+      .sort((a, b) => a.localeCompare(b));
+    const symbolItems = Array.from(symbolSet)
+      .filter((item) => (needle ? item.toLowerCase().startsWith(needle) : true))
+      .sort((a, b) => a.localeCompare(b));
+
+    // Ctrl+Space should expose the complete functions.txt set; keep symbols as secondary.
+    const items = force
+      ? [...fnItems, ...symbolItems.filter((item) => !functionSet.has(item))]
+      : [...fnItems, ...symbolItems.filter((item) => !functionSet.has(item))].slice(0, 24);
 
     if (items.length === 0) {
       setCompletion((prev) => ({ ...prev, open: false }));
@@ -669,9 +744,10 @@ export default function Editor({
             <Code2 size={16} />
             Keybinds
           </h3>
-          <p>`Ctrl/Cmd + S`: Save</p>
-          <p>`Ctrl/Cmd + Enter`: Execute</p>
-          <p>`Ctrl/Cmd + L`: Clear editor</p>
+          <p>`Ctrl + S`: Save</p>
+          <p>`Ctrl + Enter`: Execute</p>
+          <p>`Ctrl + L`: Clear editor</p>
+          <p>`Ctrl + Space`: Intellisense</p>
           <p>`Tab`: Insert tab/spaces</p>
           <p>`Shift + Tab`: Outdent selection (coming soon)</p>
           <p>`Alt + Up/Down`: Move line (coming soon)</p>
@@ -1052,6 +1128,11 @@ export default function Editor({
               <h3>Roblox Instances</h3>
               <p>
                 Attached instances: <strong>{attachedCount}</strong>
+              </p>
+              <p className="ow-instance-note">
+                Note: This preview only captures the Roblox.app window. It does not record your
+                entire screen, save recordings, or upload screen data. It only shows a live capture
+                inside Instance Manager.
               </p>
               {!screenCaptureGranted && (
                 <div className="ow-instance-perm-banner">
@@ -1494,12 +1575,21 @@ export default function Editor({
             value={draftBody}
             wrap={settings.wordWrap ? "soft" : "off"}
             onKeyDown={(event) => {
-            if ((event.ctrlKey || event.metaKey) && event.code === "Space") {
+            const keyCode = (event as unknown as { keyCode?: number }).keyCode ?? 0;
+            const isCtrlSpace =
+              event.ctrlKey &&
+              (event.code === "Space" ||
+                event.key === " " ||
+                event.key === "Spacebar" ||
+                keyCode === 32);
+            if (isCtrlSpace) {
               event.preventDefault();
               const target = event.currentTarget;
               updateCompletion(
                 target.value,
                 target.selectionStart,
+                target.selectionStart,
+                target.selectionEnd,
                 true,
                 target.scrollTop,
                 target.scrollLeft
@@ -1577,6 +1667,8 @@ export default function Editor({
               updateCompletion(
                 target.value,
                 target.selectionStart,
+                target.selectionStart,
+                target.selectionEnd,
                 false,
                 target.scrollTop,
                 target.scrollLeft
@@ -1598,6 +1690,8 @@ export default function Editor({
                 updateCompletion(
                   event.currentTarget.value,
                   event.currentTarget.selectionStart,
+                  event.currentTarget.selectionStart,
+                  event.currentTarget.selectionEnd,
                   false,
                   event.currentTarget.scrollTop,
                   event.currentTarget.scrollLeft
@@ -1625,6 +1719,7 @@ export default function Editor({
         </div>
         {completion.open && (
           <div
+            ref={completionRef}
             className="ow-intellisense"
             style={{ left: `${completion.x}px`, top: `${completion.y}px` }}
           >
