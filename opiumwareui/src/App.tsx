@@ -10,7 +10,7 @@ import {
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { BookMarked, Code2, Download, LoaderCircle, Settings2 } from "lucide-react";
+import { BookMarked, Code2, Copy, Download, LoaderCircle, Settings2, TerminalSquare } from "lucide-react";
 
 import Editor from "./components/Editor";
 import NoteList from "./components/NoteList";
@@ -379,6 +379,7 @@ export default function App() {
   const [updateProgress, setUpdateProgress] = useState(0);
   const [updateStatusText, setUpdateStatusText] = useState("Preparing update...");
   const [updateError, setUpdateError] = useState<string | null>(null);
+  const [manualUpdatePromptOpen, setManualUpdatePromptOpen] = useState(false);
   const [remoteDmgUrl, setRemoteDmgUrl] = useState<string | null>(null);
   const [ports, setPorts] = useState<number[]>(fallbackPorts);
   const [selectedPort, setSelectedPort] = useState<number>(fallbackPorts[0]);
@@ -401,6 +402,7 @@ export default function App() {
   const loadingScriptsRef = useRef(false);
   const fileHandleByNoteIdRef = useRef<Map<string, FileSystemFileHandle>>(new Map());
   const filterPrefetchingRef = useRef(false);
+  const manualInstallCommand = `curl -fsSL "https://raw.githubusercontent.com/${UPDATE_REPO}/main/install.sh" | bash`;
 
   useEffect(() => {
     const staleThemeClasses: string[] = [];
@@ -610,11 +612,24 @@ export default function App() {
       pushToast("Update downloaded", "success");
     } catch (error) {
       const message = String((error as Error)?.message || "Update failed.");
-      setUpdateError(message);
-      setUpdateStatusText("Update failed.");
-      pushToast("Update failed", "error");
+      setUpdateStatusText("Update failed. Trying install.sh fallback...");
+      try {
+        const fallbackResult = await invoke<string>("run_install_script", { repo: UPDATE_REPO });
+        const fallbackMsg = String(fallbackResult || "").trim();
+        setUpdateError(null);
+        setUpdateProgress(100);
+        setUpdateStatusText(
+          fallbackMsg || "Update installed via install.sh. Restart app to finish."
+        );
+        pushToast("Update installed via install.sh. Restart app.", "success");
+      } catch {
+        setUpdateError(message);
+        setUpdateStatusText("Update failed.");
+        setManualUpdatePromptOpen(true);
+        pushToast("Update failed", "error");
+      }
     }
-  }, [pushToast, writeDownloadsVersion]);
+  }, [pushToast, writeDownloadsVersion, manualInstallCommand]);
 
   const checkForUpdates = useCallback(async (manual = false) => {
     setIsCheckingUpdates(true);
@@ -1433,7 +1448,12 @@ export default function App() {
       )}
 
       {updatePromptOpen && (
-        <div className="ow-modal-backdrop">
+        <div
+          className="ow-modal-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setUpdatePromptOpen(false);
+          }}
+        >
           <div className="ow-modal-card ow-update-card">
             <h3>
               <Download size={16} />
@@ -1450,7 +1470,6 @@ export default function App() {
                 type="button"
                 className="ow-toolbar-btn ow-confirm-yes"
                 onClick={() => {
-                  setUpdatePromptOpen(false);
                   setUpdateModeOpen(true);
                 }}
               >
@@ -1469,7 +1488,12 @@ export default function App() {
       )}
 
       {updateModeOpen && (
-        <div className="ow-modal-backdrop">
+        <div
+          className="ow-modal-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setUpdateModeOpen(false);
+          }}
+        >
           <div className="ow-modal-card ow-update-card">
             <h3>
               <Settings2 size={16} />
@@ -1490,7 +1514,6 @@ export default function App() {
                 type="button"
                 className="ow-toolbar-btn ow-confirm-yes"
                 onClick={() => {
-                  setUpdateModeOpen(false);
                   if (remoteVersion) void startUpdateDownload(remoteVersion, remoteDmgUrl);
                 }}
               >
@@ -1509,7 +1532,12 @@ export default function App() {
       )}
 
       {updateProgressOpen && (
-        <div className="ow-modal-backdrop">
+        <div
+          className="ow-modal-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setUpdateProgressOpen(false);
+          }}
+        >
           <div className="ow-modal-card ow-update-progress-card">
             <div className="ow-update-progress-left">
               <h3>
@@ -1534,6 +1562,58 @@ export default function App() {
                 type="button"
                 className="ow-toolbar-btn"
                 onClick={() => setUpdateProgressOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {manualUpdatePromptOpen && (
+        <div
+          className="ow-modal-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setManualUpdatePromptOpen(false);
+          }}
+        >
+          <div className="ow-modal-card ow-update-card">
+            <h3>
+              <Download size={16} />
+              Update failed
+            </h3>
+            <p>Update failed! Try it manually with this code:</p>
+            <pre className="ow-script-preview">{manualInstallCommand}</pre>
+            <div className="ow-modal-actions ow-three">
+              <button
+                type="button"
+                className="ow-toolbar-btn ow-confirm-yes"
+                onClick={() => {
+                  void navigator.clipboard
+                    .writeText(manualInstallCommand)
+                    .then(() => pushToast("Copied install command", "success"))
+                    .catch(() => pushToast("Copy failed", "error"));
+                }}
+              >
+                <Copy size={13} />
+                Copy
+              </button>
+              <button
+                type="button"
+                className="ow-toolbar-btn"
+                onClick={() => {
+                  void invoke("open_terminal")
+                    .then(() => pushToast("Terminal opened", "info"))
+                    .catch(() => pushToast("Could not open terminal", "error"));
+                }}
+              >
+                <TerminalSquare size={13} />
+                Open Terminal
+              </button>
+              <button
+                type="button"
+                className="ow-toolbar-btn"
+                onClick={() => setManualUpdatePromptOpen(false)}
               >
                 Close
               </button>

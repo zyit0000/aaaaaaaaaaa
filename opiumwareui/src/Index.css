@@ -1261,6 +1261,18 @@ body.ow-theme-rose {
   width: 100%;
 }
 
+.ow-modal-actions.ow-three {
+  grid-template-columns: 1fr 1fr 1fr;
+}
+
+.ow-update-card .ow-toolbar-btn,
+.ow-update-progress-card .ow-toolbar-btn {
+  height: 30px;
+  justify-content: center;
+  font-size: 12px;
+  gap: 4px;
+}
+
 .ow-confirm-yes {
   background: var(--secondary-active-bg);
   border-color: var(--secondary-active-border);

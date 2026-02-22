@@ -6,6 +6,7 @@ use tauri::{Manager, Runtime};
 use std::error::Error;
 use std::io::Write;
 use std::net::TcpStream;
+use std::process::Command;
 use flate2::write::ZlibEncoder;
 use flate2::Compression;
 
@@ -123,6 +124,8 @@ fn main() {
             OpiumwareExecution,
             get_downloads_version,
             write_downloads_version,
+            open_terminal,
+            run_install_script,
         ])
         .run(tauri::generate_context!())
         .expect("Error while running Tauri application");
@@ -228,4 +231,68 @@ async fn write_downloads_version(app: tauri::AppHandle, version: String) -> Resu
     let version_path = downloads_dir.join("version.txt");
     fs::write(version_path, format!("{}\n", version.trim())).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+#[tauri::command]
+async fn open_terminal() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg("-a")
+            .arg("Terminal")
+            .status()
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("cmd")
+            .arg("/C")
+            .arg("start")
+            .arg("powershell")
+            .status()
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    #[allow(unreachable_code)]
+    Err("Open terminal is not supported on this platform".to_string())
+}
+
+#[tauri::command]
+async fn run_install_script(repo: Option<String>) -> Result<String, String> {
+    let repo_value = repo
+        .unwrap_or_else(|| "zyit0000/aaaaaaaaaaa".to_string())
+        .trim()
+        .to_string();
+    if repo_value.is_empty() {
+        return Err("Repo cannot be empty".to_string());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let raw_url = format!("https://raw.githubusercontent.com/{}/main/install.sh", repo_value);
+        let cmd = format!("curl -fsSL '{}' | bash", raw_url);
+        let output = Command::new("bash")
+            .arg("-lc")
+            .arg(cmd)
+            .output()
+            .map_err(|e| e.to_string())?;
+        if output.status.success() {
+            let mut text = String::from_utf8_lossy(&output.stdout).to_string();
+            if text.trim().is_empty() {
+                text = "Installer completed successfully.".to_string();
+            }
+            return Ok(text);
+        }
+        let err = String::from_utf8_lossy(&output.stderr).to_string();
+        return Err(if err.trim().is_empty() {
+            "Installer failed.".to_string()
+        } else {
+            err
+        });
+    }
+
+    #[allow(unreachable_code)]
+    Err("Install script fallback is only available on macOS".to_string())
 }
