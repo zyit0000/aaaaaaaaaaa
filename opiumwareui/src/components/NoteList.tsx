@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  MonitorUp,
+  UserRound,
   BadgeCheck,
   BookMarked,
   CircleAlert,
@@ -23,7 +25,7 @@ import {
   X,
 } from "lucide-react";
 import type { MouseEvent, ReactNode } from "react";
-import type { AppTab, Note, ScriptEntry, SettingsSection } from "../types";
+import type { AccountSection, AppTab, Note, ScriptEntry, SettingsSection } from "../types";
 import { formatNoteDate } from "../utils";
 
 interface NoteListProps {
@@ -31,6 +33,7 @@ interface NoteListProps {
   notes: Note[];
   activeNoteId: string | null;
   activeSettingsSection: SettingsSection;
+  activeAccountSection: AccountSection;
   confirmBeforeDelete: boolean;
   onSelectNote: (id: string) => void;
   onSetConfirmBeforeDelete: (value: boolean) => void;
@@ -42,6 +45,7 @@ interface NoteListProps {
   onCopyFilePath: (id: string) => void;
   onCreateFromClipboard: () => void;
   onSelectSettingsSection: (section: SettingsSection) => void;
+  onSelectAccountSection: (section: AccountSection) => void;
   onCreateFile: () => void;
   onImportFiles: (files: FileList | null) => void;
   scripts: ScriptEntry[];
@@ -93,6 +97,7 @@ export default function NoteList({
   notes,
   activeNoteId,
   activeSettingsSection,
+  activeAccountSection,
   confirmBeforeDelete,
   onSelectNote,
   onSetConfirmBeforeDelete,
@@ -104,6 +109,7 @@ export default function NoteList({
   onCopyFilePath,
   onCreateFromClipboard,
   onSelectSettingsSection,
+  onSelectAccountSection,
   onCreateFile,
   onImportFiles,
   scripts,
@@ -395,6 +401,37 @@ export default function NoteList({
             </div>
           </div>
         )}
+      </aside>
+    );
+  }
+
+  if (activeTab === "account") {
+    return (
+      <aside className="ow-secondary">
+        <header className="ow-secondary-header">
+          <h2>
+            <UserRound size={14} />
+            Account
+          </h2>
+        </header>
+        <div className="ow-secondary-content">
+          <button
+            className={`ow-secondary-row ${activeAccountSection === "accounts" ? "active" : ""}`}
+            onClick={() => onSelectAccountSection("accounts")}
+            type="button"
+          >
+            <UserRound size={14} />
+            <span>Account Manager</span>
+          </button>
+          <button
+            className={`ow-secondary-row ${activeAccountSection === "instances" ? "active" : ""}`}
+            onClick={() => onSelectAccountSection("instances")}
+            type="button"
+          >
+            <MonitorUp size={14} />
+            <span>Instance Manager</span>
+          </button>
+        </div>
       </aside>
     );
   }

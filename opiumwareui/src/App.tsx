@@ -10,12 +10,12 @@ import {
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { BookMarked, Code2, Copy, Download, LoaderCircle, Settings2, TerminalSquare, Users } from "lucide-react";
+import { BookMarked, Code2, Copy, Download, LoaderCircle, Settings2, TerminalSquare, User, Users } from "lucide-react";
 
 import Editor from "./components/Editor";
 import NoteList from "./components/NoteList";
 import Sidebar from "./components/Sidebar";
-import type { AppTab, AppTheme, EditorSettings, Note, SettingsSection } from "./types";
+import type { AccountSection, AppTab, AppTheme, EditorSettings, Note, SettingsSection } from "./types";
 import type { ScriptEntry } from "./types";
 import { generateId } from "./utils";
 
@@ -352,6 +352,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<AppTab>("code");
   const [primaryCollapsed, setPrimaryCollapsed] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("editor");
+  const [accountSection, setAccountSection] = useState<AccountSection>("accounts");
   const [theme, setTheme] = useState<AppTheme>("dark");
   const [editorSettings, setEditorSettings] = useState<EditorSettings>(defaultEditorSettings);
   const [scriptQuery, setScriptQuery] = useState("");
@@ -529,7 +530,7 @@ export default function App() {
 
   useEffect(() => {
     const prevTab = prevTabRef.current;
-    if (activeTab === "contribution" && prevTab !== "contribution") {
+    if (activeTab === "contribution" && prevTab !== activeTab) {
       contributionCollapseMemoryRef.current = {
         pendingRestore: true,
         restoreCollapsed: primaryCollapsed,
@@ -538,7 +539,7 @@ export default function App() {
     }
     if (
       prevTab === "contribution" &&
-      activeTab !== "contribution" &&
+      activeTab !== prevTab &&
       contributionCollapseMemoryRef.current.pendingRestore
     ) {
       setPrimaryCollapsed(contributionCollapseMemoryRef.current.restoreCollapsed);
@@ -861,6 +862,56 @@ export default function App() {
       callPortApi,
       pushToast,
     ]
+  );
+
+  const executeScriptToPort = useCallback(
+    async (port: number, script: string) => {
+      const trimmedScript = script.trim();
+      if (!trimmedScript) {
+        pushToast("Script is empty", "error");
+        return false;
+      }
+      const ok = await callPortApi(port, "execute", trimmedScript);
+      if (ok) {
+        setPortStatus(`Executed on ${port}`);
+        pushToast(`Executed on ${port}`, "success");
+        return true;
+      }
+      setAttachedPorts((prev) => prev.filter((item) => item !== port));
+      setPortStatus(`Execute failed on ${port}`);
+      pushToast(`Execute failed on ${port}`, "error");
+      return false;
+    },
+    [callPortApi, pushToast]
+  );
+
+  const focusInstanceWindow = useCallback(
+    async (port: number) => {
+      const ok = await callPortApi(port, "execute", "OpiumwareSetting FocusWindow true");
+      if (!ok) {
+        setAttachedPorts((prev) => prev.filter((item) => item !== port));
+        pushToast(`Could not focus window on ${port}`, "error");
+        return false;
+      }
+      pushToast(`Focused Roblox window on ${port}`, "success");
+      return true;
+    },
+    [callPortApi, pushToast]
+  );
+
+  const closeInstanceWindow = useCallback(
+    async (port: number) => {
+      const ok = await callPortApi(port, "execute", "OpiumwareSetting CloseWindow true");
+      if (!ok) {
+        setAttachedPorts((prev) => prev.filter((item) => item !== port));
+        pushToast(`Could not close window on ${port}`, "error");
+        return false;
+      }
+      setAttachedPorts((prev) => prev.filter((item) => item !== port));
+      pushToast(`Closed Roblox window on ${port}`, "info");
+      return true;
+    },
+    [callPortApi, pushToast]
   );
 
   const fetchScriptPage = useCallback(
@@ -1254,6 +1305,12 @@ export default function App() {
     if (activeTab === "library") {
       return { label: "Script Library", icon: <BookMarked size={13} /> };
     }
+    if (activeTab === "account") {
+      return {
+        label: accountSection === "instances" ? "Instance Manager" : "Account Manager",
+        icon: accountSection === "instances" ? <Users size={13} /> : <User size={13} />,
+      };
+    }
     if (activeTab === "contribution") {
       return { label: "Contribution", icon: <Users size={13} /> };
     }
@@ -1261,9 +1318,9 @@ export default function App() {
       return { label: "Settings", icon: <Settings2 size={13} /> };
     }
     return { label: "Code Editor", icon: <Code2 size={13} /> };
-  }, [activeTab]);
+  }, [activeTab, accountSection]);
 
-  const handleTopbarMouseDown = useCallback((event: ReactMouseEvent<HTMLElement>) => {
+  const handleWindowDragMouseDown = useCallback((event: ReactMouseEvent<HTMLElement>) => {
     const target = event.target as HTMLElement | null;
     if (!target) return;
     if (target.closest("button, input, textarea, select, a, [role='button']")) return;
@@ -1272,7 +1329,11 @@ export default function App() {
 
   return (
     <div className="ow-shell">
-      <header className="ow-topbar" data-tauri-drag-region onMouseDown={handleTopbarMouseDown}>
+      <header
+        className="ow-topbar"
+        data-tauri-drag-region
+        onMouseDown={handleWindowDragMouseDown}
+      >
         <div className="ow-topbar-left" data-tauri-drag-region />
         <div className="ow-topbar-center">
           {activeTabMeta.icon}
@@ -1291,8 +1352,10 @@ export default function App() {
         <Sidebar
           activeTab={activeTab}
           collapsed={primaryCollapsed}
+          collapseLocked={activeTab === "contribution"}
           onToggleCollapsed={() => setPrimaryCollapsed((v) => !v)}
           onSelectTab={setActiveTab}
+          onStartDrag={handleWindowDragMouseDown}
         />
 
         <NoteList
@@ -1300,11 +1363,13 @@ export default function App() {
           notes={visibleNotes}
           activeNoteId={state.activeNoteId}
           activeSettingsSection={settingsSection}
+          activeAccountSection={accountSection}
           confirmBeforeDelete={editorSettings.confirmBeforeDelete}
           onSetConfirmBeforeDelete={(value) =>
             setEditorSettings((prev) => ({ ...prev, confirmBeforeDelete: value }))
           }
           onSelectSettingsSection={setSettingsSection}
+          onSelectAccountSection={setAccountSection}
           onSelectNote={(id) => dispatch({ type: "SELECT_NOTE", id })}
           onCloseNote={(id) => {
             setClosedNoteIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
@@ -1377,6 +1442,7 @@ export default function App() {
           activeTab={activeTab}
           note={activeNote}
           settingsSection={settingsSection}
+          accountSection={accountSection}
           theme={theme}
           settings={editorSettings}
           onThemeChange={setTheme}
@@ -1412,6 +1478,15 @@ export default function App() {
           }}
           onExecuteScript={async (script) => {
             await executeScriptToTargets(script);
+          }}
+          onExecuteScriptToPort={async (port, script) => {
+            await executeScriptToPort(port, script);
+          }}
+          onOpenInstanceWindow={async (port) => {
+            await focusInstanceWindow(port);
+          }}
+          onCloseInstanceWindow={async (port) => {
+            await closeInstanceWindow(port);
           }}
           onClearCurrent={() => {
             setPortStatus("Cleared editor");

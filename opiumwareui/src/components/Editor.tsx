@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import {
   Plug,
   Play,
@@ -23,16 +24,40 @@ import {
   Sparkles,
   Sun,
   Type,
+  User,
   Waves,
   WrapText,
   KeyRound,
   LockOpen,
+  Trash2,
+  Gamepad2,
+  ExternalLink,
+  XCircle,
 } from "lucide-react";
 import type { ReactNode } from "react";
-import type { AppTab, AppTheme, EditorSettings, Note, ScriptEntry, SettingsSection } from "../types";
+import type {
+  AccountSection,
+  AppTab,
+  AppTheme,
+  EditorSettings,
+  Note,
+  ScriptEntry,
+  SettingsSection,
+} from "../types";
+
+interface CompletionState {
+  open: boolean;
+  items: string[];
+  index: number;
+  x: number;
+  y: number;
+  start: number;
+  end: number;
+}
 
 interface EditorProps {
   activeTab: AppTab;
+  accountSection: AccountSection;
   note: Note | null;
   settingsSection: SettingsSection;
   theme: AppTheme;
@@ -64,7 +89,23 @@ interface EditorProps {
   onAttachModeChange: (mode: "selected" | "available") => void;
   onAttachPort: () => void;
   onExecuteScript: (script: string) => void;
+  onExecuteScriptToPort: (port: number, script: string) => void;
+  onOpenInstanceWindow: (port: number) => void;
+  onCloseInstanceWindow: (port: number) => void;
   onClearCurrent: () => void;
+}
+
+interface RobloxAccountBasic {
+  id: number;
+  username: string;
+  displayName: string;
+  description: string;
+  created: string;
+  avatarUrl: string;
+}
+
+interface RobloxAccountEntry extends RobloxAccountBasic {
+  token: string;
 }
 
 const themes: Array<{ id: AppTheme; label: string; icon: ReactNode }> = [
@@ -78,8 +119,75 @@ const themes: Array<{ id: AppTheme; label: string; icon: ReactNode }> = [
   { id: "rose", label: "Rose", icon: <Sparkles size={14} /> },
 ];
 
+const INTELLISENSE_KEYWORDS = [
+  "print",
+  "function",
+  "local",
+  "return",
+  "if",
+  "elseif",
+  "else",
+  "end",
+  "for",
+  "while",
+  "repeat",
+  "until",
+  "table.insert",
+  "table.remove",
+  "string.format",
+  "math.floor",
+  "game:GetService",
+  "workspace",
+  "task.wait",
+  "pcall",
+  "xpcall",
+  "pairs",
+  "ipairs",
+  "next",
+  "spawn",
+  "typeof",
+  "Vector3.new",
+  "CFrame.new",
+  "Instance.new",
+];
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function highlightCode(value: string): string {
+  const tokenPattern =
+    /(\/\/.*$|\/\*[\s\S]*?\*\/|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\b(?:const|let|var|function|return|if|else|for|while|import|from|export|interface|type|class|new|async|await|try|catch|finally|switch|case|default)\b|\b(?:true|false|null|undefined)\b|\b\d+(?:\.\d+)?\b)/gm;
+  let html = "";
+  let last = 0;
+  let match: RegExpExecArray | null;
+  while ((match = tokenPattern.exec(value)) !== null) {
+    const raw = match[0];
+    const index = match.index;
+    if (index > last) {
+      html += escapeHtml(value.slice(last, index));
+    }
+    let cls = "ow-tok-text";
+    if (/^\/\//.test(raw) || /^\/\*/.test(raw)) cls = "ow-tok-comment";
+    else if (/^['"`]/.test(raw)) cls = "ow-tok-string";
+    else if (/^(true|false|null|undefined)$/.test(raw)) cls = "ow-tok-constant";
+    else if (/^\d/.test(raw)) cls = "ow-tok-number";
+    else cls = "ow-tok-keyword";
+    html += `<span class="${cls}">${escapeHtml(raw)}</span>`;
+    last = index + raw.length;
+  }
+  if (last < value.length) {
+    html += escapeHtml(value.slice(last));
+  }
+  return html;
+}
+
 export default function Editor({
   activeTab,
+  accountSection,
   note,
   settingsSection,
   theme,
@@ -111,15 +219,45 @@ export default function Editor({
   onAttachModeChange,
   onAttachPort,
   onExecuteScript,
+  onExecuteScriptToPort,
+  onOpenInstanceWindow,
+  onCloseInstanceWindow,
   onClearCurrent,
 }: EditorProps) {
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
+  const syntaxLayerRef = useRef<HTMLPreElement>(null);
   const lineGutterRef = useRef<HTMLDivElement>(null);
   const minimapRef = useRef<HTMLPreElement>(null);
   const syncFrameRef = useRef<number | null>(null);
   const [cursorLine, setCursorLine] = useState(1);
   const [draftBody, setDraftBody] = useState(note?.body ?? "");
   const [minimapViewport, setMinimapViewport] = useState({ top: 0, height: 0 });
+  const [completion, setCompletion] = useState<CompletionState>({
+    open: false,
+    items: [],
+    index: 0,
+    x: 0,
+    y: 0,
+    start: 0,
+    end: 0,
+  });
+  const [accountToken, setAccountToken] = useState("");
+  const [accounts, setAccounts] = useState<RobloxAccountEntry[]>([]);
+  const [accountLoading, setAccountLoading] = useState(false);
+  const [accountError, setAccountError] = useState("");
+  const [removeTarget, setRemoveTarget] = useState<RobloxAccountEntry | null>(null);
+  const [confirmRemove, setConfirmRemove] = useState(true);
+  const [playLoadingId, setPlayLoadingId] = useState<number | null>(null);
+  const [instanceModalPort, setInstanceModalPort] = useState<number | null>(null);
+  const [instanceScript, setInstanceScript] = useState("");
+  const [screenCaptureGranted, setScreenCaptureGranted] = useState(false);
+  const [screenCaptureChecked, setScreenCaptureChecked] = useState(false);
+  const [instancePreviewImage, setInstancePreviewImage] = useState<string | null>(null);
+
+  useEffect(() => {
+    const raw = localStorage.getItem("opiumware/account/confirm-remove");
+    setConfirmRemove(raw !== "0");
+  }, []);
 
   useEffect(() => {
     textAreaRef.current?.focus();
@@ -136,6 +274,50 @@ export default function Editor({
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (!(activeTab === "account" && accountSection === "instances")) return;
+    let cancelled = false;
+    void invoke<boolean>("request_screen_capture_access")
+      .then((granted) => {
+        if (cancelled) return;
+        setScreenCaptureGranted(Boolean(granted));
+        setScreenCaptureChecked(true);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setScreenCaptureGranted(false);
+        setScreenCaptureChecked(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, accountSection]);
+
+  useEffect(() => {
+    if (!(activeTab === "account" && accountSection === "instances")) return;
+    if (!screenCaptureGranted) {
+      setInstancePreviewImage(null);
+      return;
+    }
+    let cancelled = false;
+    const capture = () => {
+      void invoke<string | null>("capture_screen_preview")
+        .then((value) => {
+          if (cancelled) return;
+          if (value) setInstancePreviewImage(value);
+        })
+        .catch(() => {
+          // ignore transient capture failures
+        });
+    };
+    capture();
+    const timer = setInterval(capture, 2400);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [activeTab, accountSection, screenCaptureGranted]);
 
   const commitBodyChange = (next: string) => {
     setDraftBody(next);
@@ -173,6 +355,7 @@ export default function Editor({
         .join("\n"),
     [draftBody]
   );
+  const highlightedHtml = useMemo(() => highlightCode(draftBody), [draftBody]);
 
   const syncMinimapViewport = () => {
     const textarea = textAreaRef.current;
@@ -191,6 +374,82 @@ export default function Editor({
   useEffect(() => {
     syncMinimapViewport();
   }, [draftBody, settings.fontSize, settings.lineHeight, settings.editorPadding, settings.showMinimap]);
+
+  const updateCompletion = (
+    nextText: string,
+    caret: number,
+    force = false,
+    scrollTop = textAreaRef.current?.scrollTop ?? 0,
+    scrollLeft = textAreaRef.current?.scrollLeft ?? 0
+  ) => {
+    const before = nextText.slice(0, caret);
+    const tokenMatch = before.match(/[A-Za-z_][A-Za-z0-9_.$]*$/);
+    const token = tokenMatch?.[0] ?? "";
+    if (!force && token.length < 1) {
+      setCompletion((prev) => ({ ...prev, open: false }));
+      return;
+    }
+
+    const start = caret - token.length;
+    const end = caret;
+    const symbols = new Set<string>(INTELLISENSE_KEYWORDS);
+    const matches = nextText.match(/[A-Za-z_][A-Za-z0-9_.$]{1,}/g);
+    if (matches) {
+      for (const m of matches) symbols.add(m);
+    }
+
+    const needle = token.toLowerCase();
+    const items = Array.from(symbols)
+      .filter((item) => (force ? true : item.toLowerCase().startsWith(needle)))
+      .sort((a, b) => a.localeCompare(b))
+      .slice(0, 24);
+
+    if (items.length === 0) {
+      setCompletion((prev) => ({ ...prev, open: false }));
+      return;
+    }
+
+    const lineNumber = before.split("\n").length;
+    const lines = before.split("\n");
+    const col = lines.length > 0 ? lines[lines.length - 1].length : 0;
+    const lineHeightPx = settings.fontSize * settings.lineHeight;
+    const charWidthPx = settings.fontSize * 0.6;
+    const leftBase = settings.showLineNumbers ? 56 : 0;
+    const x = Math.max(
+      8,
+      leftBase + settings.editorPadding + col * charWidthPx - scrollLeft + 4
+    );
+    const y = Math.max(
+      8,
+      settings.editorPadding + lineHeightPx * lineNumber - scrollTop + 4
+    );
+
+    setCompletion((prev) => ({
+      ...prev,
+      open: true,
+      items,
+      index: 0,
+      x,
+      y,
+      start,
+      end,
+    }));
+  };
+
+  const applyCompletion = (choice: string) => {
+    const textarea = textAreaRef.current;
+    if (!textarea) return;
+    const next =
+      draftBody.slice(0, completion.start) + choice + draftBody.slice(completion.end);
+    commitBodyChange(next);
+    setCompletion((prev) => ({ ...prev, open: false }));
+    requestAnimationFrame(() => {
+      const nextPos = completion.start + choice.length;
+      textarea.selectionStart = nextPos;
+      textarea.selectionEnd = nextPos;
+      textarea.focus();
+    });
+  };
 
   const settingsContent = useMemo(() => {
     if (settingsSection === "editor") {
@@ -626,6 +885,40 @@ export default function Editor({
     portStatus,
   ]);
 
+  const removeAccount = (id: number) => {
+    setAccounts((prev) => prev.filter((item) => item.id !== id));
+    if (removeTarget?.id === id) {
+      setRemoveTarget(null);
+    }
+  };
+
+  const handleAskAgainChange = (checked: boolean) => {
+    const nextConfirm = !checked;
+    setConfirmRemove(nextConfirm);
+    localStorage.setItem("opiumware/account/confirm-remove", nextConfirm ? "1" : "0");
+  };
+
+  const handleRequestRemoveAccount = (account: RobloxAccountEntry) => {
+    if (!confirmRemove) {
+      removeAccount(account.id);
+      return;
+    }
+    setRemoveTarget(account);
+  };
+
+  const handleLaunchAccount = (account: RobloxAccountEntry) => {
+    setPlayLoadingId(account.id);
+    setAccountError("");
+    void invoke<string>("roblox_launch_instance", { token: account.token })
+      .then((message) => {
+        if (message) setAccountError(message);
+      })
+      .catch((error) => {
+        setAccountError(String((error as Error)?.message || error || "Failed to launch Roblox"));
+      })
+      .finally(() => setPlayLoadingId(null));
+  };
+
   if (activeTab === "settings") {
     return (
       <main className="ow-editor">
@@ -731,6 +1024,307 @@ export default function Editor({
             <div className="ow-editor-empty">Select a script from the library list.</div>
           )}
         </div>
+      </main>
+    );
+  }
+
+  if (activeTab === "account") {
+    const instancePorts = attachedPorts;
+    const attachedCount = attachedPorts.length;
+
+    if (accountSection === "instances") {
+      return (
+        <main className="ow-editor">
+          <header className="ow-editor-header">
+            <div className="ow-editor-toolbar">
+              <span className="ow-toolbar-title">
+                <User size={14} />
+                Instance Manager
+              </span>
+            </div>
+          </header>
+          <div className="ow-editor-settings">
+            <div className="ow-settings-panel">
+              <h3>Roblox Instances</h3>
+              <p>
+                Attached instances: <strong>{attachedCount}</strong>
+              </p>
+              {!screenCaptureGranted && (
+                <div className="ow-instance-perm-banner">
+                  <span>
+                    {screenCaptureChecked
+                      ? "Screen Recording permission is required for live preview."
+                      : "Requesting Screen Recording permission..."}
+                  </span>
+                  <button
+                    className="ow-toolbar-btn"
+                    type="button"
+                    onClick={() => {
+                      setScreenCaptureChecked(false);
+                      void invoke<boolean>("request_screen_capture_access")
+                        .then((granted) => {
+                          setScreenCaptureGranted(Boolean(granted));
+                          setScreenCaptureChecked(true);
+                        })
+                        .catch(() => {
+                          setScreenCaptureGranted(false);
+                          setScreenCaptureChecked(true);
+                        });
+                    }}
+                  >
+                    Enable Preview
+                  </button>
+                </div>
+              )}
+              {instancePorts.length === 0 && (
+                <p>No running attached Roblox instances detected.</p>
+              )}
+              <div className="ow-instance-grid">
+                {instancePorts.map((port) => {
+                  const attached = true;
+                  return (
+                    <div key={port} className="ow-instance-card">
+                      <button
+                        type="button"
+                        className="ow-instance-head ow-instance-open-btn"
+                        onClick={() => onOpenInstanceWindow(port)}
+                        title={`Open Roblox window on port ${port}`}
+                      >
+                        <span className="ow-instance-app">
+                          <Gamepad2 size={14} />
+                          Roblox.app
+                        </span>
+                        <strong>{attached ? `Port ${port}` : "Unattached"}</strong>
+                        <ExternalLink size={13} />
+                      </button>
+                      <div className={`ow-instance-preview ${attachedCount > 2 ? "live" : ""}`}>
+                        <div className="ow-instance-scanlines" />
+                        {screenCaptureGranted && instancePreviewImage ? (
+                          <img
+                            className="ow-instance-preview-image"
+                            src={instancePreviewImage}
+                            alt={`Roblox instance preview ${port}`}
+                          />
+                        ) : (
+                          <span>
+                            {attachedCount > 2
+                              ? `Instance screen: port ${port}`
+                              : "Instance preview enabled when more than 2 instances are active"}
+                          </span>
+                        )}
+                      </div>
+                      <div className="ow-instance-actions">
+                        <button
+                          className="ow-toolbar-btn ow-confirm-yes"
+                          type="button"
+                          onClick={() => {
+                            setInstanceModalPort(port);
+                            setInstanceScript("");
+                          }}
+                        >
+                          <Play size={13} />
+                          Execute
+                        </button>
+                        <button
+                          className="ow-toolbar-btn"
+                          type="button"
+                          onClick={() => onCloseInstanceWindow(port)}
+                        >
+                          <XCircle size={13} />
+                          Close Window
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+          {instanceModalPort !== null && (
+            <div
+              className="ow-modal-backdrop"
+              onMouseDown={(event) => {
+                if (event.target === event.currentTarget) setInstanceModalPort(null);
+              }}
+            >
+              <div className="ow-modal-card ow-update-card">
+                <h3>
+                  <Play size={16} />
+                  Execute on Port {instanceModalPort}
+                </h3>
+                <textarea
+                  className="ow-instance-script-input"
+                  value={instanceScript}
+                  onChange={(event) => setInstanceScript(event.target.value)}
+                  placeholder="Paste your script here..."
+                />
+                <div className="ow-modal-actions">
+                  <button
+                    type="button"
+                    className="ow-toolbar-btn ow-confirm-yes"
+                    onClick={() => {
+                      const target = instanceModalPort;
+                      if (target == null) return;
+                      onExecuteScriptToPort(target, instanceScript);
+                      setInstanceModalPort(null);
+                    }}
+                  >
+                    Execute
+                  </button>
+                  <button
+                    type="button"
+                    className="ow-toolbar-btn"
+                    onClick={() => setInstanceModalPort(null)}
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </main>
+      );
+    }
+
+    return (
+      <main className="ow-editor">
+        <header className="ow-editor-header">
+          <div className="ow-editor-toolbar">
+            <span className="ow-toolbar-title">
+              <User size={14} />
+              Account Manager
+            </span>
+          </div>
+        </header>
+        <div className="ow-editor-settings">
+          <div className="ow-settings-panel">
+            <h3>Account Manager</h3>
+            <p>Add Roblox accounts with token (in-memory only, never persisted).</p>
+            <div className="ow-account-input-row">
+              <input
+                type="password"
+                className="ow-library-input"
+                value={accountToken}
+                onChange={(event) => setAccountToken(event.target.value)}
+                placeholder=".ROBLOSECURITY token"
+              />
+              <button
+                className="ow-toolbar-btn"
+                type="button"
+                disabled={accountLoading || !accountToken.trim()}
+                onClick={() => {
+                  const token = accountToken.trim();
+                  if (!token) return;
+                  setAccountLoading(true);
+                  setAccountError("");
+                  void invoke<RobloxAccountBasic>("roblox_get_account_basic", { token })
+                    .then((data) => {
+                      setAccounts((prev) => {
+                        if (prev.some((item) => item.id === data.id)) return prev;
+                        return [{ ...data, token }, ...prev];
+                      });
+                      setAccountToken("");
+                    })
+                    .catch(() => setAccountError("Failed to load account from token"))
+                    .finally(() => setAccountLoading(false));
+                }}
+              >
+                {accountLoading ? "Loading..." : "Add Account"}
+              </button>
+              <button
+                className="ow-toolbar-btn"
+                type="button"
+                onClick={() => {
+                  setAccounts([]);
+                  setAccountError("");
+                }}
+              >
+                Clear
+              </button>
+            </div>
+            {accountError && <p className="ow-update-error">{accountError}</p>}
+            <div className="ow-account-grid">
+              {accounts.map((account) => (
+                <div key={account.id} className="ow-account-card">
+                  <img src={account.avatarUrl} alt={`${account.username} avatar`} />
+                  <div className="ow-account-meta">
+                    <strong>{account.displayName || account.username}</strong>
+                    <span>@{account.username}</span>
+                    <span>ID: {account.id}</span>
+                    <span>Created: {account.created ? account.created.slice(0, 10) : "unknown"}</span>
+                  </div>
+                  <div className="ow-toolbar-actions">
+                    <button
+                      className="ow-toolbar-btn ow-confirm-yes"
+                      type="button"
+                      disabled={playLoadingId === account.id}
+                      onClick={() => handleLaunchAccount(account)}
+                    >
+                      <Play size={13} />
+                      {playLoadingId === account.id ? "Launching..." : "Play"}
+                    </button>
+                    <button
+                      className="ow-toolbar-btn"
+                      type="button"
+                      onClick={() => handleRequestRemoveAccount(account)}
+                    >
+                      <Trash2 size={13} />
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              ))}
+              {accounts.length === 0 && <p>No accounts loaded.</p>}
+            </div>
+          </div>
+        </div>
+        {removeTarget && (
+          <div
+            className="ow-modal-backdrop"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) setRemoveTarget(null);
+            }}
+          >
+            <div className="ow-modal-card ow-update-card">
+              <h3>
+                <Trash2 size={16} />
+                Remove Account
+              </h3>
+              <p>Are you sure you want to remove this account?</p>
+              <p>
+                <strong>@{removeTarget.username}</strong>
+              </p>
+              <label className="ow-confirm-toggle-row">
+                <span>Don't ask again</span>
+                <input
+                  className="ow-setting-toggle"
+                  type="checkbox"
+                  checked={!confirmRemove}
+                  onChange={(event) => handleAskAgainChange(event.target.checked)}
+                />
+              </label>
+              <div className="ow-modal-actions">
+                <button
+                  type="button"
+                  className="ow-toolbar-btn ow-confirm-yes"
+                  onClick={() => {
+                    removeAccount(removeTarget.id);
+                    setRemoveTarget(null);
+                  }}
+                >
+                  Yes
+                </button>
+                <button
+                  type="button"
+                  className="ow-toolbar-btn"
+                  onClick={() => setRemoveTarget(null)}
+                >
+                  No
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
     );
   }
@@ -871,12 +1465,72 @@ export default function Editor({
             })}
           </div>
         )}
-        <textarea
-          ref={textAreaRef}
-          className={`ow-editor-textarea ${settings.smoothTyping ? "smooth" : ""}`}
-          value={draftBody}
-          wrap={settings.wordWrap ? "soft" : "off"}
-          onKeyDown={(event) => {
+        <div className="ow-code-host">
+          <pre
+            ref={syntaxLayerRef}
+            className="ow-editor-syntax-layer"
+            aria-hidden="true"
+            style={{
+              fontSize: `${settings.fontSize}px`,
+              lineHeight: settings.lineHeight,
+              tabSize: settings.tabSize,
+              padding: `${settings.editorPadding}px`,
+              fontFamily:
+                settings.fontFamily === "system"
+                  ? '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif'
+                  : '"SF Mono", "JetBrains Mono", Menlo, Consolas, monospace',
+            }}
+            dangerouslySetInnerHTML={{ __html: highlightedHtml || " " }}
+          />
+          <textarea
+            ref={textAreaRef}
+            className={`ow-editor-textarea ow-editor-textarea-overlay ${
+              settings.smoothTyping ? "smooth" : ""
+            }`}
+            value={draftBody}
+            wrap={settings.wordWrap ? "soft" : "off"}
+            onKeyDown={(event) => {
+            if ((event.ctrlKey || event.metaKey) && event.code === "Space") {
+              event.preventDefault();
+              const target = event.currentTarget;
+              updateCompletion(
+                target.value,
+                target.selectionStart,
+                true,
+                target.scrollTop,
+                target.scrollLeft
+              );
+              return;
+            }
+            if (completion.open) {
+              if (event.key === "ArrowDown") {
+                event.preventDefault();
+                setCompletion((prev) => ({
+                  ...prev,
+                  index: Math.min(prev.items.length - 1, prev.index + 1),
+                }));
+                return;
+              }
+              if (event.key === "ArrowUp") {
+                event.preventDefault();
+                setCompletion((prev) => ({
+                  ...prev,
+                  index: Math.max(0, prev.index - 1),
+                }));
+                return;
+              }
+              if (event.key === "Tab" || event.key === "Enter") {
+                event.preventDefault();
+                const choice = completion.items[completion.index];
+                if (choice) applyCompletion(choice);
+                return;
+              }
+              if (event.key === "Escape") {
+                event.preventDefault();
+                setCompletion((prev) => ({ ...prev, open: false }));
+                return;
+              }
+            }
             if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
               event.preventDefault();
               onSaveNow();
@@ -912,32 +1566,79 @@ export default function Editor({
           onKeyUp={(event) => {
             const text = event.currentTarget.value.slice(0, event.currentTarget.selectionStart);
             setCursorLine(text.split("\n").length);
-          }}
-          onChange={(event) => commitBodyChange(event.target.value)}
-          onScroll={(event) => {
-            if (lineGutterRef.current) {
-              lineGutterRef.current.scrollTop = event.currentTarget.scrollTop;
-            }
-            if (minimapRef.current) {
-              minimapRef.current.scrollTop = event.currentTarget.scrollTop;
-            }
-            syncMinimapViewport();
-          }}
-          onBlur={() => {
-            if (settings.autosaveOnBlur) onAutosave();
-          }}
-          spellCheck={settings.spellCheck}
-          style={{
-            fontSize: `${settings.fontSize}px`,
-            lineHeight: settings.lineHeight,
-            tabSize: settings.tabSize,
-            padding: `${settings.editorPadding}px`,
-            fontFamily:
-              settings.fontFamily === "system"
-                ? '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif'
-                : '"SF Mono", "JetBrains Mono", Menlo, Consolas, monospace',
-          }}
-        />
+            }}
+            onChange={(event) => commitBodyChange(event.target.value)}
+            onInput={(event) => {
+              const target = event.currentTarget;
+              updateCompletion(
+                target.value,
+                target.selectionStart,
+                false,
+                target.scrollTop,
+                target.scrollLeft
+              );
+            }}
+            onScroll={(event) => {
+              if (lineGutterRef.current) {
+                lineGutterRef.current.scrollTop = event.currentTarget.scrollTop;
+              }
+              if (minimapRef.current) {
+                minimapRef.current.scrollTop = event.currentTarget.scrollTop;
+              }
+              if (syntaxLayerRef.current) {
+                syntaxLayerRef.current.scrollTop = event.currentTarget.scrollTop;
+                syntaxLayerRef.current.scrollLeft = event.currentTarget.scrollLeft;
+              }
+              syncMinimapViewport();
+              if (completion.open) {
+                updateCompletion(
+                  event.currentTarget.value,
+                  event.currentTarget.selectionStart,
+                  false,
+                  event.currentTarget.scrollTop,
+                  event.currentTarget.scrollLeft
+                );
+              }
+            }}
+            onBlur={() => {
+              if (settings.autosaveOnBlur) onAutosave();
+              setTimeout(() => {
+                setCompletion((prev) => ({ ...prev, open: false }));
+              }, 120);
+            }}
+            spellCheck={settings.spellCheck}
+            style={{
+              fontSize: `${settings.fontSize}px`,
+              lineHeight: settings.lineHeight,
+              tabSize: settings.tabSize,
+              padding: `${settings.editorPadding}px`,
+              fontFamily:
+                settings.fontFamily === "system"
+                  ? '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif'
+                  : '"SF Mono", "JetBrains Mono", Menlo, Consolas, monospace',
+            }}
+          />
+        </div>
+        {completion.open && (
+          <div
+            className="ow-intellisense"
+            style={{ left: `${completion.x}px`, top: `${completion.y}px` }}
+          >
+            {completion.items.map((item, idx) => (
+              <button
+                key={item}
+                type="button"
+                className={`ow-intellisense-item ${idx === completion.index ? "active" : ""}`}
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  applyCompletion(item);
+                }}
+              >
+                {item}
+              </button>
+            ))}
+          </div>
+        )}
         {settings.showMinimap && (
           <div className="ow-minimap-pane" aria-hidden="true">
             <span

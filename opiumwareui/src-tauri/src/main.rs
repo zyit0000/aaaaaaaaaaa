@@ -9,6 +9,14 @@ use std::net::TcpStream;
 use std::process::Command;
 use flate2::write::ZlibEncoder;
 use flate2::Compression;
+use serde::{Deserialize, Serialize};
+use std::time::{SystemTime, UNIX_EPOCH};
+#[cfg(target_os = "macos")]
+use std::fs;
+#[cfg(target_os = "macos")]
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+#[cfg(target_os = "macos")]
+use base64::Engine as _;
 
 #[cfg(target_os = "macos")]
 use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial, NSVisualEffectState};
@@ -127,6 +135,10 @@ fn main() {
             open_terminal,
             run_install_script,
             fetch_url_text,
+            roblox_get_account_basic,
+            roblox_launch_instance,
+            request_screen_capture_access,
+            capture_screen_preview,
         ])
         .run(tauri::generate_context!())
         .expect("Error while running Tauri application");
@@ -307,4 +319,238 @@ async fn fetch_url_text(url: String) -> Result<String, String> {
         return Err(format!("HTTP {}", response.status()));
     }
     response.text().await.map_err(|e| e.to_string())
+}
+
+#[derive(Deserialize)]
+struct RobloxAuthUser {
+    id: u64,
+    name: String,
+    #[serde(rename = "displayName")]
+    display_name: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct RobloxUserInfo {
+    description: Option<String>,
+    created: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct RobloxThumbItem {
+    #[serde(rename = "imageUrl")]
+    image_url: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct RobloxThumbResponse {
+    data: Vec<RobloxThumbItem>,
+}
+
+#[derive(Serialize)]
+struct RobloxBasicAccount {
+    id: u64,
+    username: String,
+    #[serde(rename = "displayName")]
+    display_name: String,
+    description: String,
+    created: String,
+    #[serde(rename = "avatarUrl")]
+    avatar_url: String,
+}
+
+#[tauri::command]
+async fn roblox_get_account_basic(token: String) -> Result<RobloxBasicAccount, String> {
+    let cookie = format!(".ROBLOSECURITY={}", token.trim());
+    let client = reqwest::Client::builder()
+        .user_agent("OpiumwareUi/1.0")
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let auth_user = client
+        .get("https://users.roblox.com/v1/users/authenticated")
+        .header(reqwest::header::COOKIE, cookie.clone())
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !auth_user.status().is_success() {
+        return Err(format!("Auth failed: HTTP {}", auth_user.status()));
+    }
+    let auth_data = auth_user
+        .json::<RobloxAuthUser>()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let user_info = client
+        .get(format!("https://users.roblox.com/v1/users/{}", auth_data.id))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let user_info_data = if user_info.status().is_success() {
+        user_info.json::<RobloxUserInfo>().await.ok()
+    } else {
+        None
+    };
+
+    let avatar = client
+        .get(format!("https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds={}&size=150x150&format=Png&isCircular=false", auth_data.id))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let avatar_url = if avatar.status().is_success() {
+        avatar
+            .json::<RobloxThumbResponse>()
+            .await
+            .ok()
+            .and_then(|parsed| parsed.data.first().and_then(|i| i.image_url.clone()))
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+
+    Ok(RobloxBasicAccount {
+        id: auth_data.id,
+        username: auth_data.name.clone(),
+        display_name: auth_data
+            .display_name
+            .unwrap_or_else(|| auth_data.name.clone()),
+        description: user_info_data
+            .as_ref()
+            .and_then(|v| v.description.clone())
+            .unwrap_or_default(),
+        created: user_info_data
+            .as_ref()
+            .and_then(|v| v.created.clone())
+            .unwrap_or_default(),
+        avatar_url,
+    })
+}
+
+#[tauri::command]
+async fn roblox_launch_instance(token: String) -> Result<String, String> {
+    let token_trimmed = token.trim().to_string();
+    if token_trimmed.is_empty() {
+        return Err("Token is required".to_string());
+    }
+
+    let cookie = format!(".ROBLOSECURITY={}", token_trimmed);
+    let client = reqwest::Client::builder()
+        .user_agent("OpiumwareUi/1.0")
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let ticket_resp = client
+        .post("https://auth.roblox.com/v1/authentication-ticket")
+        .header(reqwest::header::COOKIE, cookie)
+        .header(reqwest::header::REFERER, "https://www.roblox.com/")
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if !ticket_resp.status().is_success() {
+        return Err(format!("Auth ticket failed: HTTP {}", ticket_resp.status()));
+    }
+
+    let ticket = ticket_resp
+        .headers()
+        .get("rbx-authentication-ticket")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+
+    if ticket.is_empty() {
+        return Err("Missing auth ticket in response".to_string());
+    }
+
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+
+    let launcher_url = format!(
+        "roblox-player:1+launchmode:play+gameinfo:{}+launchtime:{}+placelauncherurl:https://assetgame.roblox.com/game/PlaceLauncher.ashx?request=RequestGame&placeId=920587237+browsertrackerid:0+robloxLocale:en_us+gameLocale:en_us+channel:",
+        ticket, now_ms
+    );
+
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg(&launcher_url)
+            .status()
+            .map_err(|e| e.to_string())?;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("cmd")
+            .arg("/C")
+            .arg("start")
+            .arg("")
+            .arg(&launcher_url)
+            .status()
+            .map_err(|e| e.to_string())?;
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        return Err("Launching Roblox is not supported on this platform".to_string());
+    }
+
+    Ok("Launched Roblox instance".to_string())
+}
+
+#[cfg(target_os = "macos")]
+#[link(name = "ApplicationServices", kind = "framework")]
+extern "C" {
+    fn CGPreflightScreenCaptureAccess() -> bool;
+    fn CGRequestScreenCaptureAccess() -> bool;
+}
+
+#[tauri::command]
+async fn request_screen_capture_access() -> Result<bool, String> {
+    #[cfg(target_os = "macos")]
+    unsafe {
+        if CGPreflightScreenCaptureAccess() {
+            return Ok(true);
+        }
+        let granted = CGRequestScreenCaptureAccess();
+        return Ok(granted);
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(true)
+    }
+}
+
+#[tauri::command]
+async fn capture_screen_preview() -> Result<Option<String>, String> {
+    #[cfg(target_os = "macos")]
+    unsafe {
+        if !CGPreflightScreenCaptureAccess() {
+            return Ok(None);
+        }
+
+        let temp_path = std::env::temp_dir().join("opiumware_screen_preview.jpg");
+        let status = Command::new("screencapture")
+            .arg("-x")
+            .arg("-t")
+            .arg("jpg")
+            .arg(&temp_path)
+            .status()
+            .map_err(|e| e.to_string())?;
+
+        if !status.success() {
+            return Err("Failed to capture macOS screen preview".to_string());
+        }
+
+        let bytes = fs::read(&temp_path).map_err(|e| e.to_string())?;
+        let encoded = BASE64_STANDARD.encode(bytes);
+        let _ = fs::remove_file(&temp_path);
+        return Ok(Some(format!("data:image/jpeg;base64,{}", encoded)));
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(None)
+    }
 }

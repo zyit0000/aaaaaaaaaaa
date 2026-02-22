@@ -285,6 +285,7 @@ body.ow-theme-rose {
 
 .ow-topbar-left {
   height: 100%;
+  cursor: grab;
 }
 
 .ow-dot {
@@ -316,6 +317,7 @@ body.ow-theme-rose {
 
 .ow-topbar-right {
   height: 100%;
+  cursor: grab;
 }
 
 .ow-app {
@@ -350,10 +352,12 @@ body.ow-theme-rose {
   height: 1px;
   background: var(--primary-border);
   margin: 2px 0;
+  cursor: grab;
 }
 
 .ow-primary-spacer {
   flex: 1;
+  cursor: grab;
 }
 
 .ow-traffic-spacer {
@@ -869,6 +873,7 @@ body.ow-theme-rose {
   flex: 1;
   display: grid;
   grid-template-columns: auto 1fr;
+  position: relative;
 }
 
 .ow-editor-monaco {
@@ -966,6 +971,52 @@ body.ow-theme-rose {
   scrollbar-color: var(--chip-border) var(--textarea-bg);
 }
 
+.ow-code-host {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+}
+
+.ow-editor-syntax-layer {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  border-right: 1px solid var(--editor-border);
+  pointer-events: none;
+  white-space: pre;
+  overflow: hidden;
+  color: var(--textarea-fg);
+  background: var(--editor-bg);
+}
+
+.ow-editor-textarea-overlay {
+  position: relative;
+  background: transparent !important;
+  color: transparent !important;
+  -webkit-text-fill-color: transparent;
+  caret-color: var(--toolbar-fg) !important;
+}
+
+.ow-tok-keyword {
+  color: #c792ea;
+}
+
+.ow-tok-string {
+  color: #c3e88d;
+}
+
+.ow-tok-comment {
+  color: #6f86b6;
+}
+
+.ow-tok-number {
+  color: #f78c6c;
+}
+
+.ow-tok-constant {
+  color: #82aaff;
+}
+
 .ow-editor-monaco .ow-editor-textarea::selection {
   background: color-mix(in srgb, var(--secondary-active-border) 60%, transparent);
 }
@@ -1002,6 +1053,53 @@ body.ow-theme-rose {
   background: color-mix(in srgb, var(--secondary-active-border) 20%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--secondary-active-border) 30%, transparent);
   pointer-events: none;
+}
+
+.ow-intellisense {
+  position: absolute;
+  min-width: 220px;
+  max-width: 320px;
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid var(--chip-border);
+  border-radius: 8px;
+  background: var(--secondary-bg);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.35);
+  z-index: 60;
+  scrollbar-color: var(--chip-border) var(--secondary-bg);
+}
+
+.ow-intellisense-item {
+  width: 100%;
+  height: 28px;
+  border: 0;
+  background: transparent;
+  color: var(--toolbar-fg);
+  text-align: left;
+  padding: 0 10px;
+  font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.ow-intellisense-item:hover,
+.ow-intellisense-item.active {
+  background: var(--secondary-active-bg);
+  color: var(--secondary-active-fg);
+}
+
+.ow-intellisense::-webkit-scrollbar {
+  width: 9px;
+}
+
+.ow-intellisense::-webkit-scrollbar-track {
+  background: var(--secondary-bg);
+}
+
+.ow-intellisense::-webkit-scrollbar-thumb {
+  background: var(--chip-border);
+  border-radius: 999px;
+  border: 2px solid var(--secondary-bg);
 }
 
 .ow-minimap-text::-webkit-scrollbar {
@@ -1106,6 +1204,188 @@ body.ow-theme-rose {
   margin-top: 2px;
   font-size: 12px;
   color: var(--toolbar-fg);
+}
+
+.ow-account-input-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.ow-account-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.ow-account-card {
+  border: 1px solid var(--chip-border);
+  border-radius: 10px;
+  background: var(--chip-bg);
+  padding: 10px;
+  display: grid;
+  grid-template-columns: 56px 1fr;
+  gap: 10px;
+  align-items: center;
+}
+
+.ow-account-card img {
+  width: 56px;
+  height: 56px;
+  border-radius: 10px;
+  border: 1px solid var(--chip-border);
+  object-fit: cover;
+}
+
+.ow-account-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ow-account-meta strong {
+  font-size: 13px;
+  color: var(--secondary-active-fg);
+}
+
+.ow-account-meta span {
+  font-size: 11px;
+  color: var(--toolbar-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ow-instance-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.ow-instance-card {
+  border: 1px solid var(--chip-border);
+  border-radius: 10px;
+  background: var(--chip-bg);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ow-instance-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.ow-instance-open-btn {
+  width: 100%;
+  border: 1px solid var(--chip-border);
+  background: color-mix(in srgb, var(--chip-bg) 88%, transparent);
+  border-radius: 9px;
+  padding: 8px 9px;
+  cursor: pointer;
+  color: var(--toolbar-fg);
+}
+
+.ow-instance-open-btn:hover {
+  border-color: var(--secondary-active-border);
+  color: var(--secondary-active-fg);
+}
+
+.ow-instance-app {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.ow-instance-head strong {
+  font-size: 12px;
+}
+
+.ow-instance-preview {
+  position: relative;
+  border: 1px solid var(--editor-border);
+  border-radius: 10px;
+  min-height: 120px;
+  background:
+    radial-gradient(circle at 20% 20%, color-mix(in srgb, var(--secondary-active-border) 35%, transparent), transparent 45%),
+    linear-gradient(180deg, color-mix(in srgb, var(--editor-bg) 85%, black) 0%, var(--editor-bg) 100%);
+  display: grid;
+  place-items: center;
+  text-align: center;
+  padding: 12px;
+  overflow: hidden;
+}
+
+.ow-instance-preview span {
+  font-size: 11px;
+  color: var(--muted);
+  position: relative;
+  z-index: 2;
+}
+
+.ow-instance-preview.live span {
+  color: var(--secondary-active-fg);
+}
+
+.ow-instance-scanlines {
+  position: absolute;
+  inset: 0;
+  background-image: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--secondary-active-border) 22%, transparent) 1px,
+    transparent 1px
+  );
+  background-size: 100% 4px;
+  opacity: 0.5;
+}
+
+.ow-instance-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.ow-instance-perm-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border-radius: 9px;
+  border: 1px solid var(--chip-border);
+  background: color-mix(in srgb, var(--chip-bg) 86%, transparent);
+  color: var(--toolbar-fg);
+  font-size: 12px;
+}
+
+.ow-instance-preview-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  z-index: 1;
+}
+
+.ow-instance-script-input {
+  width: 100%;
+  min-height: 180px;
+  border-radius: 10px;
+  border: 1px solid var(--editor-border);
+  background: var(--editor-bg);
+  color: var(--editor-fg);
+  resize: vertical;
+  padding: 10px 11px;
+  font-size: 13px;
+  line-height: 1.5;
+  font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
 }
 
 .ow-setting-row {

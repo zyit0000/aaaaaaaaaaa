@@ -1,22 +1,33 @@
-import { BookMarked, Code2, PanelLeftClose, PanelLeftOpen, Settings, Users } from "lucide-react";
+import { BookMarked, Code2, PanelLeftClose, PanelLeftOpen, Settings, User, Users } from "lucide-react";
+import type { MouseEvent } from "react";
 import type { AppTab } from "../types";
 
 interface SidebarProps {
   activeTab: AppTab;
   collapsed: boolean;
+  collapseLocked: boolean;
   onToggleCollapsed: () => void;
   onSelectTab: (tab: AppTab) => void;
+  onStartDrag: (event: MouseEvent<HTMLElement>) => void;
 }
 
 export default function Sidebar({
   activeTab,
   collapsed,
+  collapseLocked,
   onToggleCollapsed,
   onSelectTab,
+  onStartDrag,
 }: SidebarProps) {
   return (
-    <aside className="ow-primary">
-      <button className="ow-primary-toggle" onClick={onToggleCollapsed} type="button">
+    <aside className="ow-primary" onMouseDown={onStartDrag}>
+      <button
+        className="ow-primary-toggle"
+        onClick={onToggleCollapsed}
+        type="button"
+        disabled={collapseLocked}
+        title={collapseLocked ? "Sidebar is locked in Contribution" : "Toggle sidebar"}
+      >
         {collapsed ? <PanelLeftOpen size={14} /> : <PanelLeftClose size={14} />}
       </button>
 
@@ -36,6 +47,14 @@ export default function Sidebar({
         type="button"
       >
         <BookMarked size={15} />
+      </button>
+
+      <button
+        className={`ow-primary-item ${activeTab === "account" ? "active" : ""}`}
+        onClick={() => onSelectTab("account")}
+        type="button"
+      >
+        <User size={15} />
       </button>
 
       <button
