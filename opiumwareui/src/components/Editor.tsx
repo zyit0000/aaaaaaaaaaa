@@ -119,6 +119,7 @@ export default function Editor({
   const syncFrameRef = useRef<number | null>(null);
   const [cursorLine, setCursorLine] = useState(1);
   const [draftBody, setDraftBody] = useState(note?.body ?? "");
+  const [minimapViewport, setMinimapViewport] = useState({ top: 0, height: 0 });
 
   useEffect(() => {
     textAreaRef.current?.focus();
@@ -172,6 +173,24 @@ export default function Editor({
         .join("\n"),
     [draftBody]
   );
+
+  const syncMinimapViewport = () => {
+    const textarea = textAreaRef.current;
+    if (!textarea) return;
+    const total = Math.max(1, textarea.scrollHeight);
+    const visible = textarea.clientHeight;
+    const track = Math.max(1, visible - 8);
+    const ratio = visible / total;
+    const height = Math.max(22, track * ratio);
+    const maxScroll = Math.max(1, total - visible);
+    const topRatio = textarea.scrollTop / maxScroll;
+    const top = Math.max(0, Math.min(track - height, (track - height) * topRatio));
+    setMinimapViewport({ top, height });
+  };
+
+  useEffect(() => {
+    syncMinimapViewport();
+  }, [draftBody, settings.fontSize, settings.lineHeight, settings.editorPadding, settings.showMinimap]);
 
   const settingsContent = useMemo(() => {
     if (settingsSection === "editor") {
@@ -716,6 +735,42 @@ export default function Editor({
     );
   }
 
+  if (activeTab === "contribution") {
+    return (
+      <main className="ow-editor">
+        <header className="ow-editor-header">
+          <div className="ow-editor-toolbar">
+            <span className="ow-toolbar-title">
+              <BookMarked size={14} />
+              Contribution
+            </span>
+          </div>
+        </header>
+        <div className="ow-editor-settings">
+          <div className="ow-settings-panel">
+            <h3>Contributors</h3>
+            <div className="ow-contrib-list">
+              <div className="ow-contrib-card">
+                <img className="ow-contrib-avatar" src="/icons/zyit0.png" alt="zyit0 avatar" />
+                <div className="ow-contrib-meta">
+                  <div className="ow-contrib-name">zyit0</div>
+                  <div className="ow-contrib-desc">Owner, tester, developer</div>
+                </div>
+              </div>
+              <div className="ow-contrib-card">
+                <img className="ow-contrib-avatar" src="/icons/eee.png" alt="eee avatar" />
+                <div className="ow-contrib-meta">
+                  <div className="ow-contrib-name">eee</div>
+                  <div className="ow-contrib-desc">Tester (didn't really do anything)</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
   if (!note) {
     return (
       <main className="ow-editor">
@@ -738,7 +793,7 @@ export default function Editor({
         <div className="ow-editor-toolbar">
           <span className="ow-toolbar-title">
             <FileCode2 size={14} />
-            {note.title || "untitled.ts"}
+            {note.title || "untitled.txt"}
           </span>
           <div className="ow-toolbar-actions">
             <button
@@ -787,7 +842,9 @@ export default function Editor({
           </div>
         </div>
       </header>
-      <div className="ow-editor-workspace">
+      <div
+        className={`ow-editor-workspace ${settings.showMinimap ? "has-minimap" : ""}`}
+      >
         {settings.showLineNumbers && (
           <div
             className="ow-line-gutter"
@@ -858,11 +915,13 @@ export default function Editor({
           }}
           onChange={(event) => commitBodyChange(event.target.value)}
           onScroll={(event) => {
-            if (!lineGutterRef.current) return;
-            lineGutterRef.current.scrollTop = event.currentTarget.scrollTop;
+            if (lineGutterRef.current) {
+              lineGutterRef.current.scrollTop = event.currentTarget.scrollTop;
+            }
             if (minimapRef.current) {
               minimapRef.current.scrollTop = event.currentTarget.scrollTop;
             }
+            syncMinimapViewport();
           }}
           onBlur={() => {
             if (settings.autosaveOnBlur) onAutosave();
@@ -881,6 +940,13 @@ export default function Editor({
         />
         {settings.showMinimap && (
           <div className="ow-minimap-pane" aria-hidden="true">
+            <span
+              className="ow-minimap-viewport"
+              style={{
+                top: `${minimapViewport.top}px`,
+                height: `${minimapViewport.height}px`,
+              }}
+            />
             <pre ref={minimapRef} className="ow-minimap-text">
               {minimapText || " "}
             </pre>

@@ -399,6 +399,10 @@ export default function NoteList({
     );
   }
 
+  if (activeTab === "contribution") {
+    return <aside className="ow-secondary" />;
+  }
+
   return (
     <aside className="ow-secondary">
       <header className="ow-secondary-header">
@@ -497,7 +501,7 @@ export default function NoteList({
             >
               <span className="ow-file-meta">
                 <FileText size={14} />
-                <span className="ow-file-name">{note.title || "untitled.ts"}</span>
+                <span className="ow-file-name">{note.title || "untitled.txt"}</span>
               </span>
               <span className="ow-file-time">{formatNoteDate(note.updatedAt)}</span>
             </button>

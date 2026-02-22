@@ -1,4 +1,4 @@
-import { BookMarked, Code2, PanelLeftClose, PanelLeftOpen, Settings } from "lucide-react";
+import { BookMarked, Code2, PanelLeftClose, PanelLeftOpen, Settings, Users } from "lucide-react";
 import type { AppTab } from "../types";
 
 interface SidebarProps {
@@ -36,6 +36,14 @@ export default function Sidebar({
         type="button"
       >
         <BookMarked size={15} />
+      </button>
+
+      <button
+        className={`ow-primary-item ${activeTab === "contribution" ? "active" : ""}`}
+        onClick={() => onSelectTab("contribution")}
+        type="button"
+      >
+        <Users size={15} />
       </button>
 
       <div className="ow-primary-spacer" />

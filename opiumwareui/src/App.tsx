@@ -10,7 +10,7 @@ import {
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { BookMarked, Code2, Copy, Download, LoaderCircle, Settings2, TerminalSquare } from "lucide-react";
+import { BookMarked, Code2, Copy, Download, LoaderCircle, Settings2, TerminalSquare, Users } from "lucide-react";
 
 import Editor from "./components/Editor";
 import NoteList from "./components/NoteList";
@@ -113,7 +113,7 @@ function toFileName(title: string, index: number): string {
     .toLowerCase()
     .replace(/[^a-z0-9._/\-]+/g, "-")
     .replace(/(^-|-$)/g, "");
-  return normalized || `file-${index + 1}.ts`;
+  return normalized || `file-${index + 1}.txt`;
 }
 
 function sortByUpdatedAt(notes: Note[]): Note[] {
@@ -236,7 +236,7 @@ function reducer(state: AppState, action: Action): AppState {
       const now = new Date().toISOString();
       const note: Note = {
         id: generateId(),
-        title: toFileName(action.title || "untitled.ts", state.notes.length),
+        title: toFileName(action.title || "untitled.txt", state.notes.length),
         body: action.body || "",
         createdAt: now,
         updatedAt: now,
@@ -402,6 +402,11 @@ export default function App() {
   const loadingScriptsRef = useRef(false);
   const fileHandleByNoteIdRef = useRef<Map<string, FileSystemFileHandle>>(new Map());
   const filterPrefetchingRef = useRef(false);
+  const contributionCollapseMemoryRef = useRef<{
+    pendingRestore: boolean;
+    restoreCollapsed: boolean;
+  }>({ pendingRestore: false, restoreCollapsed: false });
+  const prevTabRef = useRef<AppTab>(activeTab);
   const manualInstallCommand = `curl -fsSL "https://raw.githubusercontent.com/${UPDATE_REPO}/main/install.sh" | bash`;
 
   useEffect(() => {
@@ -521,6 +526,26 @@ export default function App() {
       setSelectedPort(ports[0] ?? 8392);
     }
   }, [ports, selectedPort]);
+
+  useEffect(() => {
+    const prevTab = prevTabRef.current;
+    if (activeTab === "contribution" && prevTab !== "contribution") {
+      contributionCollapseMemoryRef.current = {
+        pendingRestore: true,
+        restoreCollapsed: primaryCollapsed,
+      };
+      setPrimaryCollapsed(true);
+    }
+    if (
+      prevTab === "contribution" &&
+      activeTab !== "contribution" &&
+      contributionCollapseMemoryRef.current.pendingRestore
+    ) {
+      setPrimaryCollapsed(contributionCollapseMemoryRef.current.restoreCollapsed);
+      contributionCollapseMemoryRef.current.pendingRestore = false;
+    }
+    prevTabRef.current = activeTab;
+  }, [activeTab, primaryCollapsed]);
 
   const pushToast = useCallback((message: string, level: AppToast["level"]) => {
     const id = generateId();
@@ -1179,7 +1204,7 @@ export default function App() {
         handle = await (window as unknown as {
           showSaveFilePicker: (options: unknown) => Promise<FileSystemFileHandle>;
         }).showSaveFilePicker({
-          suggestedName: activeNote.title || "untitled.ts",
+          suggestedName: activeNote.title || "untitled.txt",
           types: [
             {
               description: "Code Files",
@@ -1206,7 +1231,7 @@ export default function App() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = activeNote.title || "untitled.ts";
+    link.download = activeNote.title || "untitled.txt";
     link.click();
     URL.revokeObjectURL(url);
     pushToast(`Downloaded ${activeNote.title}`, "info");
@@ -1228,6 +1253,9 @@ export default function App() {
   const activeTabMeta = useMemo(() => {
     if (activeTab === "library") {
       return { label: "Script Library", icon: <BookMarked size={13} /> };
+    }
+    if (activeTab === "contribution") {
+      return { label: "Contribution", icon: <Users size={13} /> };
     }
     if (activeTab === "settings") {
       return { label: "Settings", icon: <Settings2 size={13} /> };
@@ -1288,7 +1316,7 @@ export default function App() {
           }}
           onRenameNote={(id) => {
             const note = visibleNotes.find((n) => n.id === id);
-            const nextName = window.prompt("Rename file", note?.title || "untitled.ts");
+            const nextName = window.prompt("Rename file", note?.title || "untitled.txt");
             if (!nextName) return;
             dispatch({ type: "RENAME_NOTE", id, name: nextName });
           }}

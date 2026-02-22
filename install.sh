@@ -8,6 +8,7 @@ set -euo pipefail
 # Optional override:
 #   OPIUMWARE_REPO="owner/repo"
 #   OPIUMWARE_DIRECT_URL="https://.../asset.zip"
+clear
 
 REPO="${OPIUMWARE_REPO:-zyit0000/aaaaaaaaaaa}"
 API_URL="https://api.github.com/repos/${REPO}/releases/latest"
@@ -134,9 +135,14 @@ case "${FILE_NAME_LOWER}" in
 esac
 
 log_info "Mounting DMG..."
-MOUNT_POINT="$(hdiutil attach "${DMG_PATH}" -nobrowse -quiet | tail -n 1 | awk '{print $NF}')"
+ATTACH_OUT="$(hdiutil attach "${DMG_PATH}" -nobrowse 2>&1 || true)"
+MOUNT_POINT="$(printf "%s\n" "${ATTACH_OUT}" | awk -F'\t' '/\/Volumes\//{print $NF; exit}')"
+if [[ -z "${MOUNT_POINT}" ]]; then
+  MOUNT_POINT="$(printf "%s\n" "${ATTACH_OUT}" | grep -Eo '/Volumes/.*' | head -n 1 || true)"
+fi
 if [[ -z "${MOUNT_POINT}" ]]; then
   log_err "Failed to mount DMG."
+  log_err "${ATTACH_OUT}"
   exit 1
 fi
 

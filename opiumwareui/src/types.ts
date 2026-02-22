@@ -9,7 +9,7 @@ export interface Note {
   createdAt: string;
 }
 
-export type AppTab = "code" | "library" | "settings";
+export type AppTab = "code" | "library" | "contribution" | "settings";
 
 export type SettingsSection =
   | "editor"
