@@ -1244,7 +1244,7 @@ export default function Editor({
                           type="button"
                           onClick={() => {
                             setInstanceModalPort(port);
-                            setInstanceScript("");
+                            setInstanceScript(note?.body ?? "");
                           }}
                         >
                           <Play size={13} />
@@ -1281,7 +1281,7 @@ export default function Editor({
                   className="ow-instance-script-input"
                   value={instanceScript}
                   onChange={(event) => setInstanceScript(event.target.value)}
-                  placeholder="Paste script for this instance..."
+                  placeholder="Edit script for this instance..."
                 />
                 <div className="ow-modal-actions">
                   <button

@@ -564,22 +564,42 @@ async fn capture_screen_preview() -> Result<Option<String>, String> {
     #[cfg(target_os = "macos")]
     {
         fn roblox_window_rect() -> Result<Option<(i32, i32, i32, i32)>, String> {
-            // Try both common process names seen for Roblox desktop client.
+            // First try direct app scripting (doesn't rely on System Events accessibility).
             let script = r#"
-set targetNames to {"Roblox", "RobloxPlayer"}
-tell application "System Events"
-  repeat with n in targetNames
-    if exists (first process whose name is n) then
-      set p to first process whose name is n
-      if (count of windows of p) > 0 then
-        set w to front window of p
-        set winPos to position of w
-        set winSize to size of w
-        return (item 1 of winPos as text) & "," & (item 2 of winPos as text) & "," & (item 1 of winSize as text) & "," & (item 2 of winSize as text)
+set targetNames to {"Roblox", "RobloxPlayer", "RobloxPlayerBeta"}
+repeat with n in targetNames
+  try
+    tell application n
+      if (count of windows) > 0 then
+        set b to bounds of front window
+        set x1 to item 1 of b
+        set y1 to item 2 of b
+        set x2 to item 3 of b
+        set y2 to item 4 of b
+        set w to x2 - x1
+        set h to y2 - y1
+        return (x1 as text) & "," & (y1 as text) & "," & (w as text) & "," & (h as text)
       end if
-    end if
-  end repeat
-end tell
+    end tell
+  end try
+end repeat
+
+-- Fallback path: System Events process windows.
+try
+  tell application "System Events"
+    repeat with n in targetNames
+      if exists (first process whose name is n) then
+        set p to first process whose name is n
+        if (count of windows of p) > 0 then
+          set w to front window of p
+          set winPos to position of w
+          set winSize to size of w
+          return (item 1 of winPos as text) & "," & (item 2 of winPos as text) & "," & (item 1 of winSize as text) & "," & (item 2 of winSize as text)
+        end if
+      end if
+    end repeat
+  end tell
+end try
 return ""
 "#;
 
