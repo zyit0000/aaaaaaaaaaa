@@ -265,6 +265,7 @@ export default function Editor({
   const [confirmRemove, setConfirmRemove] = useState(true);
   const [playLoadingId, setPlayLoadingId] = useState<number | null>(null);
   const [instanceModalPort, setInstanceModalPort] = useState<number | null>(null);
+  const [instanceScript, setInstanceScript] = useState("");
   const [screenCaptureGranted, setScreenCaptureGranted] = useState(false);
   const [screenCaptureChecked, setScreenCaptureChecked] = useState(false);
   const [instancePreviewImage, setInstancePreviewImage] = useState<string | null>(null);
@@ -1227,28 +1228,23 @@ export default function Editor({
                         <strong>{attached ? `Port ${port}` : "Unattached"}</strong>
                         <ExternalLink size={13} />
                       </button>
-                      <div className={`ow-instance-preview ${attachedCount > 2 ? "live" : ""}`}>
-                        <div className="ow-instance-scanlines" />
-                        {screenCaptureGranted && instancePreviewImage ? (
+                      {settings.livePreview && screenCaptureGranted && instancePreviewImage && (
+                        <div className={`ow-instance-preview ${attachedCount > 2 ? "live" : ""}`}>
+                          <div className="ow-instance-scanlines" />
                           <img
                             className="ow-instance-preview-image"
                             src={instancePreviewImage}
                             alt={`Roblox instance preview ${port}`}
                           />
-                        ) : (
-                          <span>
-                            {attachedCount > 2
-                              ? `Instance screen: port ${port}`
-                              : "Instance preview enabled when more than 2 instances are active"}
-                          </span>
-                        )}
-                      </div>
+                        </div>
+                      )}
                       <div className="ow-instance-actions">
                         <button
                           className="ow-toolbar-btn ow-confirm-yes ow-instance-action-btn"
                           type="button"
                           onClick={() => {
                             setInstanceModalPort(port);
+                            setInstanceScript("");
                           }}
                         >
                           <Play size={13} />
@@ -1281,9 +1277,12 @@ export default function Editor({
                   <Play size={16} />
                   Execute on Port {instanceModalPort}
                 </h3>
-                <p>
-                  This uses the current code from the main editor tab.
-                </p>
+                <textarea
+                  className="ow-instance-script-input"
+                  value={instanceScript}
+                  onChange={(event) => setInstanceScript(event.target.value)}
+                  placeholder="Paste script for this instance..."
+                />
                 <div className="ow-modal-actions">
                   <button
                     type="button"
@@ -1291,7 +1290,7 @@ export default function Editor({
                     onClick={() => {
                       const target = instanceModalPort;
                       if (target == null) return;
-                      onExecuteScriptToPort(target, note?.body ?? "");
+                      onExecuteScriptToPort(target, instanceScript);
                       setInstanceModalPort(null);
                     }}
                   >

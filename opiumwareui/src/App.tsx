@@ -890,9 +890,15 @@ export default function App() {
     async (port: number) => {
       const ok = await callPortApi(port, "execute", "OpiumwareSetting FocusWindow true");
       if (!ok) {
-        setAttachedPorts((prev) => prev.filter((item) => item !== port));
-        pushToast(`Could not focus window on ${port}`, "error");
-        return false;
+        try {
+          await invoke("focus_roblox_app");
+          pushToast(`Focused Roblox app`, "success");
+          return true;
+        } catch {
+          setAttachedPorts((prev) => prev.filter((item) => item !== port));
+          pushToast(`Could not focus window on ${port}`, "error");
+          return false;
+        }
       }
       pushToast(`Focused Roblox window on ${port}`, "success");
       return true;
@@ -904,9 +910,16 @@ export default function App() {
     async (port: number) => {
       const ok = await callPortApi(port, "execute", "OpiumwareSetting CloseWindow true");
       if (!ok) {
-        setAttachedPorts((prev) => prev.filter((item) => item !== port));
-        pushToast(`Could not close window on ${port}`, "error");
-        return false;
+        try {
+          await invoke("close_roblox_app");
+          setAttachedPorts((prev) => prev.filter((item) => item !== port));
+          pushToast(`Closed Roblox app`, "info");
+          return true;
+        } catch {
+          setAttachedPorts((prev) => prev.filter((item) => item !== port));
+          pushToast(`Could not close window on ${port}`, "error");
+          return false;
+        }
       }
       setAttachedPorts((prev) => prev.filter((item) => item !== port));
       pushToast(`Closed Roblox window on ${port}`, "info");

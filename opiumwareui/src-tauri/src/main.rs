@@ -140,6 +140,8 @@ fn main() {
             request_screen_capture_access,
             capture_screen_preview,
             read_functions_txt,
+            focus_roblox_app,
+            close_roblox_app,
         ])
         .run(tauri::generate_context!())
         .expect("Error while running Tauri application");
@@ -444,6 +446,8 @@ async fn roblox_launch_instance(token: String) -> Result<String, String> {
         .post(endpoint)
         .header(reqwest::header::COOKIE, cookie.clone())
         .header(reqwest::header::REFERER, "https://www.roblox.com/")
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .body("{}")
         .send()
         .await
         .map_err(|e| e.to_string())?;
@@ -461,6 +465,8 @@ async fn roblox_launch_instance(token: String) -> Result<String, String> {
                 .header(reqwest::header::COOKIE, cookie)
                 .header(reqwest::header::REFERER, "https://www.roblox.com/")
                 .header("x-csrf-token", csrf)
+                .header(reqwest::header::CONTENT_TYPE, "application/json")
+                .body("{}")
                 .send()
                 .await
                 .map_err(|e| e.to_string())?;
@@ -666,4 +672,77 @@ async fn read_functions_txt(app: tauri::AppHandle) -> Result<String, String> {
     }
 
     Ok(String::new())
+}
+
+#[tauri::command]
+async fn focus_roblox_app() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let script = r#"
+try
+  tell application "Roblox" to activate
+end try
+try
+  tell application "RobloxPlayer" to activate
+end try
+"#;
+        let status = Command::new("osascript")
+            .arg("-e")
+            .arg(script)
+            .status()
+            .map_err(|e| e.to_string())?;
+        if !status.success() {
+            return Err("Could not focus Roblox app".to_string());
+        }
+        return Ok(());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        // Best effort fallback for Windows environments.
+        Command::new("powershell")
+            .arg("-Command")
+            .arg("$p=Get-Process RobloxPlayerBeta -ErrorAction SilentlyContinue; if($p){$wshell=New-Object -ComObject WScript.Shell; $wshell.AppActivate($p[0].Id) | Out-Null}")
+            .status()
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    #[allow(unreachable_code)]
+    Ok(())
+}
+
+#[tauri::command]
+async fn close_roblox_app() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let script = r#"
+try
+  tell application "Roblox" to quit
+end try
+try
+  tell application "RobloxPlayer" to quit
+end try
+"#;
+        let _ = Command::new("osascript")
+            .arg("-e")
+            .arg(script)
+            .status()
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let _ = Command::new("taskkill")
+            .arg("/IM")
+            .arg("RobloxPlayerBeta.exe")
+            .arg("/F")
+            .status()
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    #[allow(unreachable_code)]
+    Ok(())
 }
