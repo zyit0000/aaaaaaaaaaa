@@ -439,16 +439,39 @@ async fn roblox_launch_instance(token: String) -> Result<String, String> {
         .build()
         .map_err(|e| e.to_string())?;
 
-    let ticket_resp = client
-        .post("https://auth.roblox.com/v1/authentication-ticket")
-        .header(reqwest::header::COOKIE, cookie)
+    let endpoint = "https://auth.roblox.com/v1/authentication-ticket";
+    let mut ticket_resp = client
+        .post(endpoint)
+        .header(reqwest::header::COOKIE, cookie.clone())
         .header(reqwest::header::REFERER, "https://www.roblox.com/")
         .send()
         .await
         .map_err(|e| e.to_string())?;
 
+    if ticket_resp.status().as_u16() == 403 {
+        let csrf = ticket_resp
+            .headers()
+            .get("x-csrf-token")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        if !csrf.is_empty() {
+            ticket_resp = client
+                .post(endpoint)
+                .header(reqwest::header::COOKIE, cookie)
+                .header(reqwest::header::REFERER, "https://www.roblox.com/")
+                .header("x-csrf-token", csrf)
+                .send()
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+    }
+
     if !ticket_resp.status().is_success() {
-        return Err(format!("Auth ticket failed: HTTP {}", ticket_resp.status()));
+        return Err(format!(
+            "Auth ticket failed: HTTP {}. Check token validity/session.",
+            ticket_resp.status()
+        ));
     }
 
     let ticket = ticket_resp
@@ -577,12 +600,17 @@ return ""
         }
 
         let temp_path = std::env::temp_dir().join("opiumware_screen_preview.jpg");
-        let mut capture_cmd = Command::new("screencapture");
-        capture_cmd.arg("-x").arg("-t").arg("jpg");
+        let Some((x, y, w, h)) = roblox_window_rect()? else {
+            return Ok(None);
+        };
 
-        if let Some((x, y, w, h)) = roblox_window_rect()? {
-            capture_cmd.arg("-R").arg(format!("{},{},{},{}", x, y, w, h));
-        }
+        let mut capture_cmd = Command::new("screencapture");
+        capture_cmd
+            .arg("-x")
+            .arg("-t")
+            .arg("jpg")
+            .arg("-R")
+            .arg(format!("{},{},{},{}", x, y, w, h));
 
         let status = capture_cmd
             .arg(&temp_path)

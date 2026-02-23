@@ -19,6 +19,7 @@ export type SettingsSection =
   | "files"
   | "keybinds"
   | "opiumware"
+  | "instanceManager"
   | "version";
 
 export type AppTheme =
@@ -40,6 +41,7 @@ export interface EditorSettings {
   spellCheck: boolean;
   autosaveOnBlur: boolean;
   autoAttach: boolean;
+  livePreview: boolean;
   softTabs: boolean;
   trimTrailingWhitespaceOnSave: boolean;
   confirmBeforeDelete: boolean;

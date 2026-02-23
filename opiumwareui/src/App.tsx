@@ -87,6 +87,7 @@ const defaultEditorSettings: EditorSettings = {
   spellCheck: false,
   autosaveOnBlur: true,
   autoAttach: false,
+  livePreview: false,
   softTabs: true,
   trimTrailingWhitespaceOnSave: false,
   confirmBeforeDelete: true,

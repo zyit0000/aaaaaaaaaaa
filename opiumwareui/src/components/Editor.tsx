@@ -33,6 +33,7 @@ import {
   Gamepad2,
   ExternalLink,
   XCircle,
+  MonitorSmartphone,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import type {
@@ -264,11 +265,12 @@ export default function Editor({
   const [confirmRemove, setConfirmRemove] = useState(true);
   const [playLoadingId, setPlayLoadingId] = useState<number | null>(null);
   const [instanceModalPort, setInstanceModalPort] = useState<number | null>(null);
-  const [instanceScript, setInstanceScript] = useState("");
   const [screenCaptureGranted, setScreenCaptureGranted] = useState(false);
   const [screenCaptureChecked, setScreenCaptureChecked] = useState(false);
   const [instancePreviewImage, setInstancePreviewImage] = useState<string | null>(null);
   const [functionHints, setFunctionHints] = useState<string[]>([]);
+  const [previewConsentOpen, setPreviewConsentOpen] = useState(false);
+  const [pendingPreviewEnable, setPendingPreviewEnable] = useState(false);
 
   useEffect(() => {
     const raw = localStorage.getItem("opiumware/account/confirm-remove");
@@ -326,6 +328,14 @@ export default function Editor({
   }, []);
 
   useEffect(() => {
+    const alreadyPrompted = localStorage.getItem("opiumware/preview/prompted") === "1";
+    if (!alreadyPrompted) {
+      setPreviewConsentOpen(true);
+      setPendingPreviewEnable(false);
+    }
+  }, []);
+
+  useEffect(() => {
     const onMouseDown = (event: MouseEvent) => {
       if (!completion.open) return;
       const target = event.target as Node | null;
@@ -340,22 +350,31 @@ export default function Editor({
 
   useEffect(() => {
     if (!(activeTab === "account" && accountSection === "instances")) return;
+    if (!settings.livePreview) {
+      setScreenCaptureChecked(true);
+      setScreenCaptureGranted(false);
+      return;
+    }
     let cancelled = false;
     void invoke<boolean>("request_screen_capture_access")
       .then((granted) => {
         if (cancelled) return;
         setScreenCaptureGranted(Boolean(granted));
         setScreenCaptureChecked(true);
+        if (!granted) {
+          onSettingsChange({ livePreview: false });
+        }
       })
       .catch(() => {
         if (cancelled) return;
         setScreenCaptureGranted(false);
         setScreenCaptureChecked(true);
+        onSettingsChange({ livePreview: false });
       });
     return () => {
       cancelled = true;
     };
-  }, [activeTab, accountSection]);
+  }, [activeTab, accountSection, onSettingsChange, settings.livePreview]);
 
   useEffect(() => {
     if (!(activeTab === "account" && accountSection === "instances")) return;
@@ -363,7 +382,7 @@ export default function Editor({
       setInstancePreviewImage(null);
       return;
     }
-    if (!screenCaptureGranted) {
+    if (!screenCaptureGranted || !settings.livePreview) {
       setInstancePreviewImage(null);
       return;
     }
@@ -384,7 +403,7 @@ export default function Editor({
       cancelled = true;
       clearInterval(timer);
     };
-  }, [activeTab, accountSection, screenCaptureGranted, attachedPorts.length]);
+  }, [activeTab, accountSection, screenCaptureGranted, settings.livePreview, attachedPorts.length]);
 
   const commitBodyChange = (next: string) => {
     setDraftBody(next);
@@ -861,6 +880,40 @@ export default function Editor({
         </div>
       );
     }
+    if (settingsSection === "instanceManager") {
+      return (
+        <div className="ow-settings-panel">
+          <h3>
+            <MonitorSmartphone size={16} />
+            Instance Manager
+          </h3>
+          <p className="ow-instance-note">
+            Toggle live Roblox window preview used by Instance Manager.
+          </p>
+          <label className="ow-setting-row">
+            <span>
+              <MonitorSmartphone size={14} />
+              Live Roblox preview
+            </span>
+            <input
+              className="ow-setting-toggle"
+              type="checkbox"
+              checked={settings.livePreview}
+              onChange={(event) => {
+                if (event.target.checked) {
+                  setPendingPreviewEnable(true);
+                  setPreviewConsentOpen(true);
+                  return;
+                }
+                onSettingsChange({ livePreview: false });
+                setScreenCaptureGranted(false);
+                setInstancePreviewImage(null);
+              }}
+            />
+          </label>
+        </div>
+      );
+    }
     return (
       <div className="ow-settings-panel">
         <h3>
@@ -1145,16 +1198,8 @@ export default function Editor({
                     className="ow-toolbar-btn"
                     type="button"
                     onClick={() => {
-                      setScreenCaptureChecked(false);
-                      void invoke<boolean>("request_screen_capture_access")
-                        .then((granted) => {
-                          setScreenCaptureGranted(Boolean(granted));
-                          setScreenCaptureChecked(true);
-                        })
-                        .catch(() => {
-                          setScreenCaptureGranted(false);
-                          setScreenCaptureChecked(true);
-                        });
+                      setPendingPreviewEnable(true);
+                      setPreviewConsentOpen(true);
                     }}
                   >
                     Enable Preview
@@ -1200,18 +1245,17 @@ export default function Editor({
                       </div>
                       <div className="ow-instance-actions">
                         <button
-                          className="ow-toolbar-btn ow-confirm-yes"
+                          className="ow-toolbar-btn ow-confirm-yes ow-instance-action-btn"
                           type="button"
                           onClick={() => {
                             setInstanceModalPort(port);
-                            setInstanceScript("");
                           }}
                         >
                           <Play size={13} />
                           Execute
                         </button>
                         <button
-                          className="ow-toolbar-btn"
+                          className="ow-toolbar-btn ow-instance-action-btn"
                           type="button"
                           onClick={() => onCloseInstanceWindow(port)}
                         >
@@ -1237,12 +1281,9 @@ export default function Editor({
                   <Play size={16} />
                   Execute on Port {instanceModalPort}
                 </h3>
-                <textarea
-                  className="ow-instance-script-input"
-                  value={instanceScript}
-                  onChange={(event) => setInstanceScript(event.target.value)}
-                  placeholder="Paste your script here..."
-                />
+                <p>
+                  This uses the current code from the main editor tab.
+                </p>
                 <div className="ow-modal-actions">
                   <button
                     type="button"
@@ -1250,7 +1291,7 @@ export default function Editor({
                     onClick={() => {
                       const target = instanceModalPort;
                       if (target == null) return;
-                      onExecuteScriptToPort(target, instanceScript);
+                      onExecuteScriptToPort(target, note?.body ?? "");
                       setInstanceModalPort(null);
                     }}
                   >
@@ -1262,6 +1303,69 @@ export default function Editor({
                     onClick={() => setInstanceModalPort(null)}
                   >
                     Close
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+          {previewConsentOpen && (
+            <div
+              className="ow-modal-backdrop"
+              onMouseDown={(event) => {
+                if (event.target === event.currentTarget) {
+                  setPreviewConsentOpen(false);
+                  setPendingPreviewEnable(false);
+                }
+              }}
+            >
+              <div className="ow-modal-card ow-update-card">
+                <h3>
+                  <MonitorSmartphone size={16} />
+                  {pendingPreviewEnable ? "Turn On Live Preview?" : "Enable Live Roblox Preview?"}
+                </h3>
+                <p className="ow-instance-note">
+                  This preview only captures the Roblox.app window. It does not record your full screen,
+                  save recordings, or upload screen data.
+                </p>
+                <div className="ow-modal-actions">
+                  <button
+                    type="button"
+                    className="ow-toolbar-btn ow-confirm-yes"
+                    onClick={() => {
+                      localStorage.setItem("opiumware/preview/prompted", "1");
+                      setScreenCaptureChecked(false);
+                      void invoke<boolean>("request_screen_capture_access")
+                        .then((granted) => {
+                          const ok = Boolean(granted);
+                          setScreenCaptureGranted(ok);
+                          setScreenCaptureChecked(true);
+                          onSettingsChange({ livePreview: ok });
+                        })
+                        .catch(() => {
+                          setScreenCaptureGranted(false);
+                          setScreenCaptureChecked(true);
+                          onSettingsChange({ livePreview: false });
+                        })
+                        .finally(() => {
+                          setPreviewConsentOpen(false);
+                          setPendingPreviewEnable(false);
+                        });
+                    }}
+                  >
+                    Allow
+                  </button>
+                  <button
+                    type="button"
+                    className="ow-toolbar-btn"
+                    onClick={() => {
+                      localStorage.setItem("opiumware/preview/prompted", "1");
+                      onSettingsChange({ livePreview: false });
+                      setScreenCaptureGranted(false);
+                      setPreviewConsentOpen(false);
+                      setPendingPreviewEnable(false);
+                    }}
+                  >
+                    Decline
                   </button>
                 </div>
               </div>
@@ -1761,6 +1865,69 @@ export default function Editor({
           </span>
           <span>{settings.wordWrap ? "Wrap: On" : "Wrap: Off"}</span>
           <span>{draftBody.length} chars</span>
+        </div>
+      )}
+      {previewConsentOpen && (
+        <div
+          className="ow-modal-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setPreviewConsentOpen(false);
+              setPendingPreviewEnable(false);
+            }
+          }}
+        >
+          <div className="ow-modal-card ow-update-card">
+            <h3>
+              <MonitorSmartphone size={16} />
+              {pendingPreviewEnable ? "Turn On Live Preview?" : "Enable Live Roblox Preview?"}
+            </h3>
+            <p className="ow-instance-note">
+              This preview only captures the Roblox.app window. It does not record your full screen,
+              save recordings, or upload screen data.
+            </p>
+            <div className="ow-modal-actions">
+              <button
+                type="button"
+                className="ow-toolbar-btn ow-confirm-yes"
+                onClick={() => {
+                  localStorage.setItem("opiumware/preview/prompted", "1");
+                  setScreenCaptureChecked(false);
+                  void invoke<boolean>("request_screen_capture_access")
+                    .then((granted) => {
+                      const ok = Boolean(granted);
+                      setScreenCaptureGranted(ok);
+                      setScreenCaptureChecked(true);
+                      onSettingsChange({ livePreview: ok });
+                    })
+                    .catch(() => {
+                      setScreenCaptureGranted(false);
+                      setScreenCaptureChecked(true);
+                      onSettingsChange({ livePreview: false });
+                    })
+                    .finally(() => {
+                      setPreviewConsentOpen(false);
+                      setPendingPreviewEnable(false);
+                    });
+                }}
+              >
+                Allow
+              </button>
+              <button
+                type="button"
+                className="ow-toolbar-btn"
+                onClick={() => {
+                  localStorage.setItem("opiumware/preview/prompted", "1");
+                  onSettingsChange({ livePreview: false });
+                  setScreenCaptureGranted(false);
+                  setPreviewConsentOpen(false);
+                  setPendingPreviewEnable(false);
+                }}
+              >
+                Decline
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </main>

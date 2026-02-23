@@ -75,6 +75,7 @@ const settingsSections: Array<{ id: SettingsSection; label: string; icon: ReactN
   { id: "files", label: "Files", icon: <FileCode2 size={14} /> },
   { id: "keybinds", label: "Keybinds", icon: <Keyboard size={14} /> },
   { id: "opiumware", label: "Opiumware", icon: <Plug size={14} /> },
+  { id: "instanceManager", label: "Instance manager", icon: <MonitorUp size={14} /> },
   { id: "version", label: "Version", icon: <MonitorSmartphone size={14} /> },
 ];
 
