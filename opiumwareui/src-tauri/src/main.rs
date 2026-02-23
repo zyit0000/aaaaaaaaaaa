@@ -496,16 +496,20 @@ async fn roblox_launch_instance(token: String) -> Result<String, String> {
         .map(|d| d.as_millis())
         .unwrap_or(0);
 
+    // Launch Roblox client app mode (no fixed placeId) so Play doesn't force-join a game.
+    // Keep gameinfo from the provided token's auth ticket.
     let launcher_url = format!(
-        "roblox-player:1+launchmode:play+gameinfo:{}+launchtime:{}+placelauncherurl:https://assetgame.roblox.com/game/PlaceLauncher.ashx?request=RequestGame&placeId=920587237+browsertrackerid:0+robloxLocale:en_us+gameLocale:en_us+channel:",
+        "roblox-player:1+launchmode:app+gameinfo:{}+launchtime:{}+browsertrackerid:0+robloxLocale:en_us+gameLocale:en_us+channel:",
         ticket, now_ms
     );
 
     #[cfg(target_os = "macos")]
     {
-        Command::new("open")
+        // Start a new Roblox process directly to avoid reusing the currently running instance.
+        // This is closer to the behavior of launching RobloxPlayer binary from Go.
+        Command::new("/Applications/Roblox.app/Contents/MacOS/RobloxPlayer")
             .arg(&launcher_url)
-            .status()
+            .spawn()
             .map_err(|e| e.to_string())?;
     }
 

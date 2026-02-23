@@ -1044,8 +1044,8 @@ export default function Editor({
     setPlayLoadingId(account.id);
     setAccountError("");
     void invoke<string>("roblox_launch_instance", { token: account.token })
-      .then((message) => {
-        if (message) setAccountError(message);
+      .then(() => {
+        setAccountError("");
       })
       .catch((error) => {
         setAccountError(String((error as Error)?.message || error || "Failed to launch Roblox"));
